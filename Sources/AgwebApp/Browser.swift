@@ -243,7 +243,13 @@ final class Browser {
             }
             response = Response(ok: true, output: Self.hide(secrets, in: output))
         } catch {
-            response = Response(ok: false, output: Self.hide(secrets, in: "Error: \(error)"))
+            var message = "\(error)"
+            // The ref's element is gone, so say what it was: the agent may have acted on it several replies ago.
+            if let match = message.firstMatch(of: #/ref (e\d+) not found/#),
+               let label = model.workspaces.first(where: { $0.name == request.workspace })?.current?.refLabels[String(match.1)] {
+                message.insert(contentsOf: " (\(label))", at: match.1.endIndex)
+            }
+            response = Response(ok: false, output: Self.hide(secrets, in: "Error: " + message))
         }
         #if AGWEB_COMMAND_LOG
         CommandLogFile.append(request, response, started: started)
@@ -672,7 +678,11 @@ final class Browser {
             }
             return "### Screenshot\n\(path)\n" + describe(tab, note: note)
         case "wait":
-            return try await wait(tab, args.first, options) + "\n" + describe(tab)
+            let result = try await wait(tab, args.first, options)
+            // A wait --url can end mid-redirect, and the snapshot for Changes would stall on the next page.
+            let deadline = Date().addingTimeInterval(10)
+            while webView.isLoading, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
+            return result + "\n" + describe(tab) + (await changes(tab, urlBefore: urlBefore))
         case "emulate":
             guard let scheme = options["color-scheme"] else { throw Failure("use: agweb emulate --color-scheme dark|light|auto") }
             // prefers-color-scheme follows the view's appearance; only this tab changes.
@@ -957,7 +967,15 @@ final class Browser {
     /// The page tree, and the document it came from; new elements number on from the workspace's last ref.
     private func snapshotTree(_ tab: Tab, _ target: String) async throws -> (doc: String, tree: String) {
         var handles: [[Int]: WKFrameInfo]?
-        return try await snapshotTree(tab, target, in: tab.frameRefs[target], handles: &handles)
+        let snapshot = try await snapshotTree(tab, target, in: tab.frameRefs[target], handles: &handles)
+        if tab.refLabels.count > 20_000 { tab.refLabels.removeAll() }
+        // Role and name only: a value may be what the agent typed. Anchored, so page text quoting "[ref=e3]" can't claim e3.
+        for line in snapshot.tree.split(separator: "\n") {
+            guard let match = line.firstMatch(of: #/^ *- ([a-z-]+(?: "(?:[^"\\]|\\.)*")?)(?: \[(?:[a-z]+(?:=\d+)?|value=(?:<hidden>|"(?:[^"\\]|\\.)*"))\])* \[ref=(e\d+)\]/#) else { continue }
+            // Hidden before it is cut, or a secret across the cut would show its first half.
+            tab.refLabels[String(match.2)] = String(Self.hide(secrets, in: String(match.1)).prefix(80))
+        }
+        return snapshot
     }
 
     /// One frame's tree with each cross-origin frame in it put in under its iframe, one after another so refs stay
@@ -1402,12 +1420,15 @@ final class Browser {
     /// document; the new tree becomes the baseline, so the next action reports only its own changes.
     private func changes(_ tab: Tab, urlBefore: String) async -> String {
         var out: [String] = []
-        for call in tab.requests where (call["start"] as? Double ?? 0) >= tab.commandStart {
-            let status = (call["status"] as? Int).map(String.init) ?? "failed"
+        // Only finished calls are listed: an action waits for its own, a wait may end with one in flight.
+        let calls = tab.requests.filter { ($0["start"] as? Double ?? 0) >= tab.commandStart }
+        for call in calls.prefix(10) {
+            let status = (call["failure"] == nil ? call["status"] as? Int : nil).map(String.init) ?? "failed"
             // Hidden before it is cut, or a secret across the cut would show its first half.
             let url = Self.hide(secrets, in: call["url"] as? String ?? "")
             out.append("- call: \(call["method"] as? String ?? "GET") \(url.prefix(120)) => \(status)")
         }
+        if calls.count > 10 { out.append("- (\(calls.count - 10) more calls; requests to see them)") }
         if let last = tab.snapshots[""], let snapshot = try? await snapshotTree(tab, "") {
             if snapshot.doc != last.doc {
                 tab.snapshots[""] = nil

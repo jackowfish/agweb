@@ -387,6 +387,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var events: [String] = []
     /// The cross-origin frame each snapshot ref inside one lives in; a ref missing here is in the page itself.
     @ObservationIgnored var frameRefs: [String: Frame] = [:]
+    /// What each ref shown on this page was (`button "Close"`), so an error about a ref gone since can name it.
+    @ObservationIgnored var refLabels: [String: String] = [:]
     /// Where the tab was when the last command here ended. A different history entry at the next command, or a new
     /// document at another URL in the same entry (`location.replace`), means something else moved the tab: a click in
     /// the window, the page itself. A URL change inside the page (`replaceState`) doesn't count: apps do it all the time.
@@ -663,6 +665,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         commits += 1
         frameRefs.removeAll()
+        refLabels.removeAll()
         console.removeAll()
         unreadErrors = 0
     }

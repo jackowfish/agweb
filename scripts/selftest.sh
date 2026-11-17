@@ -243,7 +243,7 @@ check '  - button "Added later" \[ref=' -w alpha find 'Added later'
 fails "nothing on the page matches" -w alpha find 'no such words'
 added=$("$agweb" -w alpha find 'Added later' | sed -n 's/.*"Added later" \[ref=\(e[0-9]*\)\].*/\1/p')
 check "Page" -w alpha eval "() => document.querySelector('#added').remove()"
-fails "ref $added not found: the page changed" -w alpha click "$added"
+fails "ref $added (button \"Added later\") not found: the page changed" -w alpha click "$added"
 fails 'visible buttons: button "Press me" \[ref=' -w alpha click 'role=button[name="Pres me"]' --timeout=0
 check "Page" -w alpha eval "() => { setTimeout(() => { const b = document.createElement('button'); b.id = 'later'; b.textContent = 'Later'; b.onclick = () => log.push('later'); document.body.append(b) }, 600) }"
 check "Page" -w alpha click '#later'

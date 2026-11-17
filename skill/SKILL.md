@@ -14,7 +14,7 @@ A browser window shared with other agents. Each task gets its own **workspace** 
 agweb -w fix-login open https://app.example.com # one workspace per task, a unique name (fresh profile)
 agweb -w fix-login snapshot # page tree with [ref=eN] handles
 agweb -w fix-login click e12 # act; the reply lists what changed under ### Changes
-agweb -w fix-login snapshot --diff # after goto, wait or eval, or when the page changed by itself
+agweb -w fix-login snapshot --diff # after goto or eval, or when the page changed by itself
 agweb -w fix-login goto https://app.example.com/x # navigate; never eval "location.href=...", which tells you nothing
 agweb -w fix-login close # when done; otherwise the workspace reopens after a restart
 ```
@@ -26,7 +26,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 - If Events say `the tab moved since your last command`, or `go-back` lands somewhere unexpected, `agweb history` shows the tab's entries (`-1` is where `go-back` goes).
 - Keep stderr: errors say why and exit 1. Never `2>/dev/null`; chain dependent steps with `&&`, not `;`.
 - Actions wait up to 5 s for their target to be visible and enabled (`--timeout=MS`, 0 to skip), so no `wait` before a `click`; `wait` for anything slower, `wait <target> --enabled` for a disabled button.
-- After a snapshot, action replies carry `### Changes`: the fetch/XHR calls they started (the reply waits for them) and the tree lines added (`+`) or removed (`-`). Read it instead of taking another snapshot; over 20 lines it is cut, then `snapshot`.
+- After a snapshot, action and `wait` replies carry `### Changes`: the fetch/XHR calls they started (an action waits for them) and the tree lines added (`+`) or removed (`-`). Read it instead of taking another snapshot; over 20 lines it is cut, then `snapshot`.
 - `### Events` lists alerts, confirms, popups, downloads and redirects.
 - Logins need a named profile (`-p`). With no profile and no credentials, `ask` the person to log in; never guess. Also `ask` for MFA codes, CAPTCHAs, a failed bot check and anything only a person may click. A Cloudflare checkbox ("Verify you are human") is the exception: the `### Page` note gives its spot, and `mousemove x y`, `mousedown`, `mouseup` there passes it.
 
