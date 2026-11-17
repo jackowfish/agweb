@@ -31,6 +31,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/
 cp -f Resources/Info.plist "$app/Contents/Info.plist"
 # agweb version prints it, for bug reports; -dirty marks uncommitted changes.
 plutil -insert AgwebCommit -string "$(git describe --always --dirty 2>/dev/null || echo unknown)" "$app/Contents/Info.plist"
+# A throwaway copy must not offer itself as the default browser.
+$test && plutil -remove CFBundleURLTypes "$app/Contents/Info.plist"
 $test && plutil -replace CFBundleIdentifier -string "$(plutil -extract CFBundleIdentifier raw Resources/Info.plist).test" "$app/Contents/Info.plist"
 cp -f Resources/AppIcon.icns Resources/defuddle.js Resources/defuddle-LICENSE "$app/Contents/Resources/"
 cp -f skill/SKILL.md "$app/Contents/Resources/skill/"

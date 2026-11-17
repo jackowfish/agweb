@@ -195,6 +195,21 @@ final class Browser {
         mainWindow.focusAddress()
     }
 
+    /// A link opened from another app: a new tab in the person's own workspace, never an agent's. The person
+    /// clicked it, so the window comes forward.
+    func openFromOutside(_ url: URL) {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let workspace = try? existingOrNewWorkspace(named: Self.userWorkspace, profile: nil) else { return }
+        let tab = makeTab(in: workspace, configuration: nil, opener: nil)
+        model.dashboardOpen = false
+        model.display(tab.id)
+        Task { _ = await tab.load(url) }
+        let window = mainWindow.window
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
     private var windowHidden: Bool { !MainWindow.isRendering(mainWindow.window) }
 
     // MARK: Commands

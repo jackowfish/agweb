@@ -35,6 +35,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.mainMenu = makeMainMenu(target: browser.mainWindow, settings: settings, about: self)
         browser.mainWindow.showQuietly()
+        launched = true
+        pendingURLs.forEach(browser.openFromOutside)
+        pendingURLs = []
+    }
+
+    private var launched = false
+    private var pendingURLs: [URL] = []
+
+    /// A link clicked in another app, with Agweb as the default browser. One that launched the app arrives before
+    /// the workspaces are restored, so it waits for them.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard launched else { pendingURLs += urls; return }
+        urls.forEach(browser.openFromOutside)
     }
 
     // A Dock click activates the app first, then reopens. `open -a` on a running app (a second CLI racing the
