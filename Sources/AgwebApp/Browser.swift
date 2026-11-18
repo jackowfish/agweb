@@ -31,6 +31,14 @@ final class Browser {
             self.scheduleSave()
         }
         model.onDashboard = { [weak self] open in self?.dashboardChanged(open) }
+        let check = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.releaseSecureInput() } }
+        check.tolerance = 0.1
+        // The person's switch away leaves no half second. Again on the next turn, in case WebKit's own update on the
+        // window resigning key comes after this notice and turns it back on.
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.releaseSecureInput() }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.releaseSecureInput() } }
+        }
         model.onCloseTab = { [weak self] tab in self?.closeTab(tab) }
         model.onCloseWorkspace = { [weak self] workspace in self?.closeWorkspace(workspace) }
         model.onNewTab = { [weak self] workspace in self?.newTabFromUser(in: workspace) }
@@ -237,6 +245,8 @@ final class Browser {
 
     private func execute(_ request: Request) async -> Response {
         defer {
+            // A fill or click on a password field; the timer would also catch it, later if App Nap slows it.
+            releaseSecureInput()
             if let workspace = model.workspaces.first(where: { $0.name == request.workspace }) {
                 // Its own command ran (global ones like `list` leave it unbusy): an hour-long `ask` ends as use, for the
                 // tab it acted on too.

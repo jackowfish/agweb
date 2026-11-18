@@ -29,6 +29,7 @@ Agent actions never activate the app, raise or focus its window, or pop anything
 - WKWebView has no `mouseMoved:`; moves use the `_simulateMouseMove:` SPI, and pages only see them because of `AgentWindow`.
 - Private API is called through its IMP after `responds(to:)`; KVC on it raised an ObjC exception that wedged every command.
 - WebKit sees a page as hidden only when its view (or an ancestor) is hidden, it is out of the window, or the window is closed or occluded; stacked siblings don't count. So tabs nobody needs are hidden explicitly, and `inactiveSchedulingPolicy = .suspend` then suspends their process after about 4 minutes. A hidden or suspended tab still answers scripts and `takeSnapshot`; commands wake their tab first.
+- `AgentWindow` reports key while agweb is in the background, so WebKit turns on secure input for a focused password field there, blinding every event tap on the Mac; `releaseSecureInput` (Visibility.swift) turns it off. `ioreg -l -w 0 | grep SecureInputPID` shows it (the PID it names can be another app).
 - WebKit numbers the middle button 4 in `WKNavigationAction.buttonNumber`, and opens nothing on a middle click by itself.
 - A reopened tab's sessionStorage is saved by script and put back by a document-start user script, before the page's own scripts read it.
 

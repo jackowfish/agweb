@@ -778,6 +778,15 @@ check '^read given$' -w cb --raw eval "() => (r.textContent = '', rd.click(), ne
 pbpaste | grep -q -e 'no gesture' -e 'via writeText' -e 'via setData' -e 'late copy' -e 'field text' -e 'from the frame' && fail "a page wrote the person's clipboard"
 fails "clipboard-set <text>, then agweb press Meta+v" -w cb paste
 check "workspace cb closed" -w cb close
+echo "== a password field focused in the background leaves the Mac's secure input off (every event tap goes blind)"
+printf '<title>pw</title><input id=pw type=password>' >"$dir/pw.html"
+secure() { ioreg -l -w 0 | grep -c '"kCGSSessionSecureInputPID"='; }
+secure_before=$(secure)
+check "Title: pw" -w sec open "http://127.0.0.1:$port/pw.html"
+check "Page" -w sec fill '#pw' secret
+if [ "$secure_before" != 0 ]; then printf 'skip  secure input was already on (another app holds it)\n'
+else sleep 1; [ "$(secure)" = 0 ] || fail "a password field focused in the background left secure input on"; fi
+check "workspace sec closed" -w sec close
 
 echo "== an idle tab nobody watches is hidden; a command wakes it"
 check "Title" -w vis open "$u"

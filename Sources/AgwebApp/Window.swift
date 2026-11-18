@@ -382,7 +382,8 @@ private struct AskBar: View {
 
 /// WebKit ignores mouse moves in a window that is not key, so agents' hovers would never happen. While the app
 /// is in the background the window reports key, which WebKit reads when key status changes; making it key for
-/// real would take the keyboard from the person's app. Scoping this to each move does not work for that reason.
+/// real would take the keyboard from the person's app. Scoping this to each move does not work for that reason. It also
+/// turns on secure input for a focused password field, which `Browser.releaseSecureInput` undoes.
 final class AgentWindow: NSWindow {
     override var isKeyWindow: Bool { super.isKeyWindow || !NSApp.isActive }
 

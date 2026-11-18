@@ -42,6 +42,22 @@ extension Browser {
         if tab.workspace.name != Self.userWorkspace { tab.setMuted(hidden) }
     }
 
+    /// AgentWindow reports key while agweb is in the background, so a password field focused there by an agent, a
+    /// page or the person before they switched away turns on secure input as in the front window: every event tap on
+    /// the Mac (keyboard tools, window switchers) then goes blind until the field loses focus. WebKit sends no notice
+    /// of it, so it is turned off when agweb goes to the background, after each command and twice a second (a page's
+    /// own focus). Only a window's first responder can hold it: WebKit resets it when a view resigns.
+    func releaseSecureInput() {
+        let enabled = NSSelectorFromString("_secureEventInputEnabledForTesting"), reset = NSSelectorFromString("_resetSecureInputState")
+        guard !NSApp.isActive else { return }
+        typealias Get = @convention(c) (AnyObject, Selector) -> Bool
+        typealias Call = @convention(c) (AnyObject, Selector) -> Void
+        for view in NSApp.windows.compactMap({ $0.firstResponder as? WKWebView }) where view.responds(to: enabled) && view.responds(to: reset) {
+            guard unsafeBitCast(view.method(for: enabled), to: Get.self)(view, enabled) else { continue }
+            unsafeBitCast(view.method(for: reset), to: Call.self)(view, reset)
+        }
+    }
+
     func keepAwakeAfterCommand(_ tab: Tab) {
         tab.awakeUntil = Date().addingTimeInterval(Self.awakeAfterCommand)
         Task {
