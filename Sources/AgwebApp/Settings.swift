@@ -101,45 +101,13 @@ struct PasskeySettings: View {
     }
 }
 
+/// The command line tool and the agent skill.
 struct GeneralSettings: View {
-    @AppStorage(Settings.showUsage, store: Settings.store) private var showUsage = true
-    @AppStorage(Settings.columns, store: Settings.store) private var columns = 0
-    @AppStorage(Settings.textSize, store: Settings.store) private var textSize = TextSize.medium
-    @AppStorage(Settings.adBlock, store: Settings.store) private var adBlock = true
-    @State private var adBlockStatus = ""
     @State private var skill: [String] = []
     @State private var cli = ""
 
     var body: some View {
         Form {
-            Section("Appearance") {
-                Picker("Text size", selection: $textSize) {
-                    ForEach(TextSize.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Text("Sidebar and dashboard. ⌘+ and ⌘− zoom a page.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Ads and trackers") {
-                Toggle("Block ads and trackers", isOn: $adBlock)
-                    .onChange(of: adBlock) { AdBlock.shared.settingChanged(); adBlockStatus = AdBlock.shared.summary }
-                LabeledContent(adBlockStatus) {
-                    Button("Update") {
-                        let task = AdBlock.shared.update(force: true)
-                        adBlockStatus = AdBlock.shared.summary
-                        Task { await task.value; adBlockStatus = AdBlock.shared.summary }
-                    }
-                    .disabled(!adBlock)
-                }
-                Text("uBlock Origin's lists. Agents can turn it off for their own workspace.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Dashboard") {
-                Picker("Columns", selection: $columns) {
-                    Text("Automatic").tag(0)
-                    Divider()
-                    // More than 6 makes tiles too small to read on a laptop screen.
-                    ForEach(1...6, id: \.self) { Text("\($0)").tag($0) }
-                }
-                Toggle("Show CPU and memory", isOn: $showUsage)
-            }
             Section("Command line tool") {
                 LabeledContent(cli) {
                     Button("Install") { CLIInstaller.runWithAlert(); cli = CLIInstaller.status }
@@ -154,9 +122,54 @@ struct GeneralSettings: View {
         .formStyle(.grouped)
         .onAppear {
             cli = CLIInstaller.status
-            adBlockStatus = AdBlock.shared.summary
             skill = SkillInstaller.agents.map { "\($0.name): \(SkillInstaller.status($0.folder))" }
         }
+        .frame(width: 440)
+        .fixedSize()
+    }
+}
+
+/// Text size, the dashboard and ad blocking.
+struct AppearanceSettings: View {
+    @AppStorage(Settings.showUsage, store: Settings.store) private var showUsage = true
+    @AppStorage(Settings.columns, store: Settings.store) private var columns = 0
+    @AppStorage(Settings.textSize, store: Settings.store) private var textSize = TextSize.medium
+    @AppStorage(Settings.adBlock, store: Settings.store) private var adBlock = true
+    @State private var adBlockStatus = ""
+
+    var body: some View {
+        Form {
+            Section("Text") {
+                Picker("Text size", selection: $textSize) {
+                    ForEach(TextSize.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Text("Sidebar and dashboard. ⌘+ and ⌘− zoom a page.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Dashboard") {
+                Picker("Columns", selection: $columns) {
+                    Text("Automatic").tag(0)
+                    Divider()
+                    // More than 6 makes tiles too small to read on a laptop screen.
+                    ForEach(1...6, id: \.self) { Text("\($0)").tag($0) }
+                }
+                Toggle("Show CPU and memory", isOn: $showUsage)
+            }
+            Section("Ads and trackers") {
+                Toggle("Block ads and trackers", isOn: $adBlock)
+                    .onChange(of: adBlock) { AdBlock.shared.settingChanged(); adBlockStatus = AdBlock.shared.summary }
+                LabeledContent(adBlockStatus) {
+                    Button("Update") {
+                        let task = AdBlock.shared.update(force: true)
+                        adBlockStatus = AdBlock.shared.summary
+                        Task { await task.value; adBlockStatus = AdBlock.shared.summary }
+                    }
+                    .disabled(!adBlock)
+                }
+                Text("uBlock Origin's lists. Agents can turn it off for their own workspace.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { adBlockStatus = AdBlock.shared.summary }
         .frame(width: 440)
         .fixedSize()
     }
@@ -168,7 +181,8 @@ final class SettingsWindow: NSObject {
     private lazy var window: NSWindow = {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
-        for (title, symbol, view) in [("General", "gearshape", AnyView(GeneralSettings())), ("Passkeys", "person.badge.key", AnyView(PasskeySettings()))] {
+        for (title, symbol, view) in [("General", "gearshape", AnyView(GeneralSettings())), ("Appearance", "paintbrush", AnyView(AppearanceSettings())),
+                                     ("Passkeys", "person.badge.key", AnyView(PasskeySettings()))] {
             let host = NSHostingController(rootView: view)
             host.sizingOptions = .preferredContentSize
             // The tab controller gives the window the selected tab's view controller title; without one it's "Untitled".
