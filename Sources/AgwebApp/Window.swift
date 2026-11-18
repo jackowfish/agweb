@@ -236,7 +236,9 @@ final class MainWindow: NSObject, NSWindowDelegate {
         }
     }
 
+    /// ⌘W closes the window in front when it isn't this one (Settings, About), as in any Mac app.
     @objc func closeTab(_ sender: Any?) {
+        if let front = NSApp.keyWindow, front !== window { front.performClose(sender); return }
         if let tab = model.displayedTab { model.onCloseTab?(tab) } else { window.orderOut(nil) }
     }
 
