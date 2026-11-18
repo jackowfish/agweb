@@ -809,6 +809,11 @@ check "pageerror: TypeError: null is not an object" -w beta console error
 check "warn: careful" -w beta console warning
 check "warn: careful" -w beta console --clear
 check "no console messages" -w beta console
+# Copying what a page logs runs none of its code: a getter on an Error's stack is how pages spot an open developer
+# console (BrowserScan's CDP check), and toJSON, toString or a patched Function.prototype.apply would show agweb too.
+check "Page" -w beta eval "() => { window.fired = []; const e = new Error('trapped'); Object.defineProperty(e, 'stack', { get() { fired.push('stack') } }); const apply = Function.prototype.apply; Function.prototype.apply = function (...a) { fired.push('apply'); return apply.call(this, ...a) }; console.log(e, { n: 1, get g() { fired.push('getter') }, toJSON() { fired.push('toJSON') }, toString() { fired.push('toString') } }); Function.prototype.apply = apply }"
+check '^\[\]$' -w beta --raw eval 'JSON.stringify(fired)'
+check 'log: Error: trapped {"n":1,"g":\[getter\],"toJSON":\[function toJSON\],"toString":\[function toString\]}' -w beta console --clear
 check "Page" -w beta eval "() => console.log('before-reload')"
 check "Page" -w beta reload
 lacks "before-reload" -w beta console

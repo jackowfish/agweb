@@ -860,24 +860,83 @@ public enum PageScripts {
     return 'ok';
     """
 
-    // Page world, document start: forwards console output and uncaught errors to the app.
+    // Page world, document start: forwards console output and uncaught errors to the app, without running page code.
     public static let consoleHook = """
     (() => {
-      const describe = (a) => {
-        if (typeof a === 'string') return a;
-        // WebKit's stack is only the frames, without V8's "TypeError: message" first line.
-        if (a instanceof Error) return `${a.name}: ${a.message}` + (a.stack ? ` (at ${a.stack.split('\\n')[0]})` : '');
-        try { return JSON.stringify(a) ?? String(a); } catch { return String(a); }
+      const handler = window.webkit?.messageHandlers?.agwebConsole;
+      if (!handler) return;
+      // Built-ins taken before the page's scripts run, so describing what a page logs never runs the page's code. A
+      // native console.log touches nothing on its arguments; a page that puts a getter on an Error's stack and sees it
+      // called knows a developer console is open, or that agweb is. Values behind getters show as [getter]. A Proxy's
+      // traps can still see the look (accepted).
+      const uncurry = Function.prototype.bind.bind(Function.prototype.call);
+      const send = uncurry(handler.postMessage);
+      const apply = Reflect.apply, descriptor = Object.getOwnPropertyDescriptor, protoOf = Object.getPrototypeOf;
+      const ownKeys = Object.keys, isArray = Array.isArray, quote = JSON.stringify, toTag = Symbol.toStringTag;
+      const isProto = uncurry(Object.prototype.isPrototypeOf), indexOf = uncurry(String.prototype.indexOf);
+      const slice = uncurry(String.prototype.slice), iso = uncurry(Date.prototype.toISOString);
+      const ErrorProto = Error.prototype, DateProto = Date.prototype, ErrorEventProto = ErrorEvent.prototype;
+      const get = (proto, key) => uncurry(descriptor(proto, key).get);
+      const eventMessage = get(ErrorEventProto, 'message'), eventFile = get(ErrorEventProto, 'filename');
+      const eventLine = get(ErrorEventProto, 'lineno'), eventReason = get(PromiseRejectionEvent.prototype, 'reason');
+      const GETTER = {};
+      // A property's stored value, looked up through the prototypes without calling anything.
+      const stored = (o, key) => {
+        for (let p = o, i = 0; p && i < 32; p = protoOf(p), i++) {
+          const d = descriptor(p, key);
+          if (d) return 'value' in d ? d.value : GETTER;
+        }
       };
-      const post = (level, args) => {
-        try { window.webkit.messageHandlers.agwebConsole.postMessage(`${level}: ${args.map(describe).join(' ')}`); } catch {}
+      const nested = (v, depth) => v === GETTER ? '[getter]' : typeof v === 'string' ? quote(v) : describe(v, depth);
+      const describe = (a, depth = 0) => {
+        switch (typeof a) {
+          case 'string': return a;
+          case 'function': { const name = stored(a, 'name'); return '[function ' + (typeof name === 'string' && name ? name : '(anonymous)') + ']'; }
+          case 'object': break;
+          default: return String(a);
+        }
+        if (a === null) return 'null';
+        if (isProto(ErrorProto, a)) {
+          const name = stored(a, 'name'), message = stored(a, 'message'), stack = stored(a, 'stack');
+          // WebKit's stack is only the frames, without V8's "TypeError: message" first line.
+          const end = typeof stack === 'string' ? indexOf(stack, '\\n') : -1;
+          const frame = typeof stack === 'string' && stack ? (end < 0 ? stack : slice(stack, 0, end)) : '';
+          return (typeof name === 'string' ? name : 'Error') + ': ' + (typeof message === 'string' ? message : '') + (frame ? ' (at ' + frame + ')' : '');
+        }
+        if (isProto(DateProto, a)) { try { return iso(a); } catch { return 'Invalid Date'; } }
+        if (isArray(a)) {
+          if (depth > 2) return '[…]';
+          const length = stored(a, 'length');
+          let out = '[';
+          for (let i = 0; i < length && i < 20; i++) out += (i ? ',' : '') + nested(stored(a, String(i)), depth + 1);
+          return out + (length > 20 ? ',…]' : ']');
+        }
+        const tag = stored(a, toTag);
+        if (typeof tag === 'string') return '[object ' + tag + ']';
+        if (depth > 2) return '{…}';
+        const keys = ownKeys(a);
+        let out = '{';
+        for (let i = 0; i < keys.length && i < 20; i++) {
+          const d = descriptor(a, keys[i]);
+          out += (i ? ',' : '') + quote(keys[i]) + ':' + nested(d && 'value' in d ? d.value : GETTER, depth + 1);
+        }
+        return out + (keys.length > 20 ? ',…}' : '}');
+      };
+      const post = (level, text) => { try { send(handler, level + ': ' + text); } catch {} };
+      const join = (args) => {
+        let out = '';
+        for (let i = 0; i < args.length; i++) out += (i ? ' ' : '') + describe(args[i]);
+        return out;
       };
       for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
         const original = console[level];
-        console[level] = function (...args) { post(level, args); return original.apply(this, args); };
+        console[level] = function (...args) { post(level, join(args)); return apply(original, this, args); };
       }
-      addEventListener('error', e => post('pageerror', [e.error ?? e.message]));
-      addEventListener('unhandledrejection', e => post('pageerror', [e.reason]));
+      // The event's own fields: the Error itself may carry a getter.
+      addEventListener('error', e => {
+        if (isProto(ErrorEventProto, e)) post('pageerror', eventMessage(e) + ' (at ' + eventFile(e) + ':' + eventLine(e) + ')');
+      });
+      addEventListener('unhandledrejection', e => post('pageerror', describe(eventReason(e))));
     })();
     """
 
