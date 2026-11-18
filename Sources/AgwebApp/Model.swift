@@ -98,6 +98,10 @@ final class Workspace: Identifiable {
     }
 
     @ObservationIgnored let console: ConsoleSink
+    /// A fresh workspace's passkeys, gone with it; a named profile's are in the Keychain (Passkeys).
+    @ObservationIgnored let passkeys = MemoryPasskeyStore()
+    /// The command running (or last run) acts on the page, so its page may use passkeys (Passkeys.commands).
+    @ObservationIgnored var passkeyCommand = false
 
     init(name: String, profile: String?, console: ConsoleSink) {
         self.name = name
@@ -114,6 +118,7 @@ final class Workspace: Identifiable {
     static func addHandlers(_ sink: ConsoleSink, to controller: WKUserContentController) {
         for handler in ["agwebConsole", "agwebPage"] { controller.add(sink, name: handler) }
         controller.addScriptMessageHandler(sink, contentWorld: .page, name: "agwebClipboard")
+        controller.addScriptMessageHandler(Passkeys.shared, contentWorld: .page, name: Passkeys.handlerName)
     }
 
     /// User scripts apply to the next load; live pages get the new routes directly. A reopened tab with saved
@@ -124,6 +129,9 @@ final class Workspace: Identifiable {
         var scripts = [WKUserScript(source: PageScripts.consoleHook, injectionTime: .atDocumentStart, forMainFrameOnly: false),
                        WKUserScript(source: setRoutes + PageScripts.networkHook, injectionTime: .atDocumentStart, forMainFrameOnly: false),
                        WKUserScript(source: PageScripts.clipboardHook, injectionTime: .atDocumentStart, forMainFrameOnly: false)]
+        if Passkeys.shared.enabled {
+            scripts.append(WKUserScript(source: PageScripts.passkeyShim, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+        }
         if !pendingStorage.isEmpty, let json = try? JSONEncoder().encode(pendingStorage) {
             scripts.append(WKUserScript(source: PageScripts.pendingStorage(String(decoding: json, as: UTF8.self)),
                                         injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -254,6 +262,15 @@ enum Profiles {
         }
         // WebKit refuses to remove a store it still holds, which it does for a while after the store's last tab
         // closes, and crashes removing one before any web view exists. Wiping its data works in both cases.
+        // First: what the person made stays theirs, and passkeys left in the Keychain would pass to a profile made later
+        // with this name.
+        try await MainActor.run {
+            let mine = try Passkeys.shared.personMade(profile: name)
+            guard mine.isEmpty else {
+                throw Failure("profile \(name) holds passkeys the person made (\(mine.joined(separator: ", "))); they delete those in Settings ▸ Passkeys first")
+            }
+            try Passkeys.shared.forget(profile: name)
+        }
         let store = stores.removeValue(forKey: name) ?? makeStore(name)
         await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         if Agweb.isDefaultRoot { try? await WKWebsiteDataStore.remove(forIdentifier: identifier(name)) }
@@ -396,13 +413,20 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var events: [String] = []
     /// The cross-origin frame each snapshot ref inside one lives in; a ref missing here is in the page itself.
     @ObservationIgnored var frameRefs: [String: Frame] = [:]
+    /// When the agent's last command here ended plus the grace, and the person's last click or key in the page while
+    /// it was shown: the only times a page may use passkeys (Passkeys.prepare). Kept across a load, unlike
+    /// personInputAt: a sign-in button often opens the page that asks.
+    @ObservationIgnored var agentUntil = Date.distantPast
+    @ObservationIgnored var passkeyInputAt = Date.distantPast
+    /// The last passkey ceremony answered here, which `settle` waits past for the call that sends it to the site.
+    @ObservationIgnored var passkeyAt = Date.distantPast
     /// What each ref shown on this page was (`button "Close"`), so an error about a ref gone since can name it.
     @ObservationIgnored var refLabels: [String: String] = [:]
     /// Where the tab was when the last command here ended. A different history entry at the next command, or a new
     /// document at another URL in the same entry (`location.replace`), means something else moved the tab: a click in
     /// the window, the page itself. A URL change inside the page (`replaceState`) doesn't count: apps do it all the time.
     @ObservationIgnored private var seen: (entry: WKBackForwardListItem?, commits: Int, url: URL?)?
-    @ObservationIgnored private var commits = 0
+    @ObservationIgnored private(set) var commits = 0
     func markSeen() { seen = (webView.backForwardList.currentItem, commits, webView.url) }
     var movedSinceSeen: Bool {
         guard let seen, let entry = webView.backForwardList.currentItem else { return false }
@@ -672,9 +696,16 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         }
         let network = Date().addingTimeInterval(5)
         var waited = false, first = true
-        while Date() < network, (try? await call(PageScripts.busySince, ["since": commandStart, "first": first], world: .page)) == "true" {
-            first = false
-            waited = true
+        while Date() < network {
+            if (try? await call(PageScripts.busySince, ["since": commandStart, "first": first], world: .page)) == "true" {
+                first = false
+                waited = true
+            } else if Date().timeIntervalSince(passkeyAt) < 0.3 {
+                // A passkey was just answered; the page sends it to its server next.
+                waited = true
+            } else {
+                break
+            }
             try? await Task.sleep(for: .milliseconds(100))
         }
         // The page renders the answer just after the call ends.

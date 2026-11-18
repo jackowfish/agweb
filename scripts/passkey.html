@@ -1,0 +1,59 @@
+<!doctype html>
+<title>passkeys</title>
+<button id=reg onclick="reg()">Register</button>
+<button id=again onclick="reg(true)">Register again</button>
+<button id=signin onclick="signin()">Sign in</button>
+<button id=badrp onclick="reg(false, 'example.com')">Bad rp</button>
+<button id=abort onclick="aborted()">Abort</button>
+<button id=srcdoc onclick="srcdoc()">Srcdoc</button>
+<pre id=out></pre>
+<script>
+// Checks what a relying party checks: clientData type, challenge and origin, the rp id hash, the ES256 signature.
+const out = (t) => { document.getElementById('out').textContent = t; parent !== window && parent.postMessage(t, '*'); };
+const enc = new TextEncoder(), dec = new TextDecoder();
+const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+const b64u = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+async function reg(exclude, rpId) {
+  try {
+    const challenge = rand(16);
+    const c = await navigator.credentials.create({ publicKey: { challenge, rp: { name: 'test', ...(rpId ? { id: rpId } : {}) },
+      user: { id: enc.encode('user-1'), name: 'tester', displayName: 'Tester' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      excludeCredentials: exclude ? [{ type: 'public-key', id: unb64u(localStorage.cred) }] : [], extensions: { credProps: true } } });
+    const cd = JSON.parse(dec.decode(c.response.clientDataJSON));
+    if (cd.type !== 'webauthn.create' || cd.challenge !== b64u(challenge) || cd.origin !== location.origin) throw new Error('bad clientData ' + JSON.stringify(cd));
+    localStorage.cred = c.id;
+    localStorage.spki = b64u(c.response.getPublicKey());
+    out('registered instanceof=' + (c instanceof PublicKeyCredential) + ' rk=' + c.getClientExtensionResults().credProps?.rk);
+  } catch (e) { out(e.name + ': ' + e.message); }
+}
+function derToRaw(der) {
+  const r = der.slice(4, 4 + der[3]), s = der.slice(6 + der[3], 6 + der[3] + der[5 + der[3]]);
+  const pad = (x) => { x = x[0] === 0 ? x.slice(1) : x; const o = new Uint8Array(32); o.set(x, 32 - x.length); return o; };
+  return new Uint8Array([...pad(r), ...pad(s)]);
+}
+async function signin(signal) {
+  try {
+    const challenge = rand(16);
+    const a = await navigator.credentials.get({ publicKey: { challenge }, signal });
+    const cd = JSON.parse(dec.decode(a.response.clientDataJSON));
+    if (cd.type !== 'webauthn.get' || cd.challenge !== b64u(challenge) || cd.origin !== location.origin) throw new Error('bad clientData');
+    const key = await crypto.subtle.importKey('spki', unb64u(localStorage.spki), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const auth = new Uint8Array(a.response.authenticatorData);
+    const data = new Uint8Array([...auth, ...new Uint8Array(await crypto.subtle.digest('SHA-256', a.response.clientDataJSON))]);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, derToRaw(new Uint8Array(a.response.signature)), data);
+    const rp = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(location.hostname)));
+    const same = rp.every((v, i) => v === auth[i]) && (auth[32] & 0x05) === 0x05;
+    out((ok && same ? 'verified ' : 'BAD SIGNATURE ') + dec.decode(a.response.userHandle));
+  } catch (e) { out(e.name + ': ' + e.message); }
+}
+function aborted() { const c = new AbortController(); c.abort(); signin(c.signal); }
+function srcdoc() {
+  const f = document.createElement('iframe');
+  f.srcdoc = 'x';
+  f.onload = () => out('srcdoc ' + (String(f.contentWindow.CredentialsContainer.prototype.get).includes('[native code]') ? 'native' : 'patched'));
+  document.body.append(f);
+}
+addEventListener('message', (e) => { if (e.source !== window) document.getElementById('out').textContent = 'frame: ' + e.data; });
+if (location.hash === '#frame') reg();
+</script>

@@ -8,8 +8,28 @@ Agent actions never activate the app, raise or focus its window, or pop anything
 
 ## Layout
 
-- `Sources/AgwebCore`: host-free code with unit tests: socket protocol, page scripts (`PageScripts.swift`, the injected JS), reply shaping (`Output.swift`), the command list and did-you-mean (`Commands.swift`), address parsing, the human pointer and typing rhythm (`Motion.swift`), filter lists to WebKit content rules (`FilterList.swift`).
-- `Sources/AgwebApp`: the app. `Browser.swift` dispatches commands (one at a time per workspace, workspaces in parallel) and `BrowserState.swift` holds requests, routes, cookies and storage state, `Model.swift` holds workspaces, tabs and named profiles (session cookies, locks), `Visibility.swift` decides which tabs WebKit sees, `SavedWorkspaces.swift` saves and reopens workspaces, tabs, their sessionStorage and when each was last used, `Dashboard.swift` the ⌘D grid, `AdBlock.swift` fetches uBlock Origin's lists every 4 days and puts the compiled rules on every content controller (off for the instance in Settings, for one workspace with `agweb -w NAME adblock off`), `Input.swift` synthesizes native events, `ClipboardRouting.swift` puts a page's copy on the person's clipboard after their own click and in the workspace's after an agent's (pages never write the system clipboard themselves), `Recorder.swift` records video, `Window.swift`/`Toolbar.swift` the UI.
+- `Sources/AgwebCore`: host-free code with unit tests.
+  - `PageScripts.swift`: the injected JS.
+  - `Output.swift`: reply shaping.
+  - `Commands.swift`: the command list and did-you-mean.
+  - `Motion.swift`: the human pointer and typing rhythm.
+  - `FilterList.swift`: filter lists to WebKit content rules.
+  - `Passkey.swift`: WebAuthn encoding and the public suffix check.
+  - Also the socket protocol and address parsing.
+- `Sources/AgwebApp`: the app.
+  - `Browser.swift`: dispatches commands, one at a time per workspace, workspaces in parallel.
+  - `BrowserState.swift`: requests, routes, cookies and storage state.
+  - `Model.swift`: workspaces, tabs and named profiles (session cookies, locks).
+  - `Visibility.swift`: which tabs WebKit sees; turns off the secure input WebKit leaves on in the background.
+  - `SavedWorkspaces.swift`: saves and reopens workspaces, tabs, their sessionStorage and when each was last used.
+  - `Dashboard.swift`: the ⌘D grid.
+  - `AdBlock.swift`: fetches uBlock Origin's lists every 4 days and puts the compiled rules on every content controller (off for the instance in Settings, for one workspace with `agweb -w NAME adblock off`).
+  - `Input.swift`: synthesizes native events.
+  - `ClipboardRouting.swift`: a page's copy goes to the person's clipboard after their own click and to the workspace's after an agent's; pages never write the system clipboard themselves.
+  - `Passkeys.swift`: agweb's own passkey authenticator. `PageScripts.passkeyShim` sends a page's `navigator.credentials` requests to it; it answers only during or just after an agent's command or the person's click in that tab, for the origin WebKit reports.
+  - `PasskeyStores.swift`: passkeys per profile (Keychain, file, or in memory for a fresh workspace).
+  - `Recorder.swift`: records video.
+  - `Window.swift`, `Toolbar.swift`, `Settings.swift`: the UI.
 - `Sources/agweb`: the CLI. It launches the app with `open -g` when nobody holds the socket's lock, passing `AGWEB_ROOT` on.
 
 ## Build and test
@@ -37,6 +57,7 @@ Agent actions never activate the app, raise or focus its window, or pop anything
 
 - `~/Library/WebKit/<bundle id>/WebsiteDataStore/<uuid>/`: a named profile's WebKit data in the default root; any other root keeps it in `<root>/webkit/<uuid>/` through WebKit SPI (`Profiles.makeStore`) and its settings in the defaults domain `Agweb.settingsSuite`. The uuid is derived from the name. Fresh profiles live in memory only. The launch sweep of deleted profiles' folders is skipped when the registry can't be read.
 - The root (`~/Library/Application Support/agweb/` by default): `agweb.sock`, `workspaces.json`, `profiles/profiles.json` (names), `profiles/session-cookies/<uuid>.plist` (saved a second after each page change and on quit, restored before the profile's first load; a `kill -9` loses what changed since), `profiles/locks/<uuid>.lock`, `adblock/` (the lists, `state.json`, compiled rules in `compiled/`), `logs/`. Files carrying URLs or cookies are 0600.
+- Passkeys: the person's instance keeps one login Keychain item per passkey (service `<bundle id>.passkey`); any other root keeps `<root>/passkeys.json` (0600), unless `AGWEB_PASSKEY_STORE=keychain`. `AGWEB_PASSKEY_SECONDS` shortens the time a page may ask after a command (selftest).
 
 ## Known gaps
 
@@ -45,4 +66,4 @@ Agent actions never activate the app, raise or focus its window, or pop anything
 - HTML5 draggables get DOM drag events: a native drag would follow the person's real mouse.
 - `document.hasFocus()` is false, since the window is never key while agents work. The window reports key to WebKit only while the app is in the background (WebKit drops mouse moves otherwise), so pages also react to the person's pointer over it.
 - A closed or minimized window pauses pages; screenshots refuse and recordings get no frames until `agweb show`.
-- Passkeys need an entitled browser or associated domains.
+- Agweb answers passkey requests with its own passkeys only; the person's Apple Passwords passkeys need Apple's browser entitlement (applied for).

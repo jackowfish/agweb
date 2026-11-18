@@ -1,6 +1,6 @@
 ---
 name: agweb
-description: "Drive a real, visible WebKit browser from the shell with the agweb CLI (never steals focus; agents work in parallel, one workspace each). Use for any browser task: opening sites, logging in with a saved profile or a password from pass, 1Password or Bitwarden kept out of the transcript, clicking, filling forms, reading page text or tables, screenshots, PDFs, waiting for SPAs, network calls and console errors, mocking APIs, cookies, uploads, downloads, demo videos, testing web apps. Use instead of playwright-cli."
+description: "Drive a real, visible WebKit browser from the shell with the agweb CLI (never steals focus; agents work in parallel, one workspace each). Use for any browser task: opening sites, logging in with a saved profile or a password from pass, 1Password or Bitwarden kept out of the transcript, passkeys, clicking, filling forms, reading page text or tables, screenshots, PDFs, waiting for SPAs, network calls and console errors, mocking APIs, cookies, uploads, downloads, demo videos, testing web apps. Use instead of playwright-cli."
 allowed-tools: Bash(agweb:*)
 ---
 
@@ -29,7 +29,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 - After a snapshot, action and `wait` replies carry `### Changes`: the fetch/XHR calls they started (an action waits for them) and the tree lines added (`+`) or removed (`-`). Read it instead of taking another snapshot; over 20 lines it is cut, then `snapshot`.
 - `### Events` lists alerts, confirms, popups, downloads and redirects, and what a page copied (`copied "..." to the workspace clipboard`).
 - A page's copy (a copy button, `press Meta+c`) goes to the workspace's own clipboard, never the person's: `agweb --raw clipboard` prints it. To paste: `clipboard-set <text>`, then `press Meta+v` (the page's paste handler and its clipboard reads get it). Only when the person asks for it on their clipboard: `agweb --raw clipboard | pbcopy`.
-- Logins need a named profile (`-p`). With no profile and no credentials, `ask` the person to log in; never guess. Also `ask` for MFA codes, CAPTCHAs, a failed bot check and anything only a person may click. A Cloudflare checkbox ("Verify you are human") is the exception: the `### Page` note gives its spot, and `mousemove x y`, `mousedown`, `mouseup` there passes it.
+- Without `-p` a workspace is fresh: its cookies, logins and passkeys live in memory and are gone at `close` or when agweb quits. Logins need a named profile (`-p`). With no profile and no credentials, `ask` the person to log in; never guess. Also `ask` for MFA codes, CAPTCHAs, a failed bot check and anything only a person may click. A Cloudflare checkbox ("Verify you are human") is the exception: the `### Page` note gives its spot, and `mousemove x y`, `mousedown`, `mouseup` there passes it.
 
 ## Targets
 
@@ -49,6 +49,8 @@ agweb -w task ask "Please sign in, then click Done" --url=/dashboard # no creden
 ```
 
 The profile is fixed at `open`: `close`, then `open -p`. `--secret-cmd CMD` (`pass show site`, `op read op://vault/site/password`, `bw get password site`) and `--secret-file PATH` take the first line; the value shows as `<hidden>` in every reply.
+
+Passkeys: a site's passkey sign-up or sign-in button works with no prompt (Events: `passkey created for ...`). They are agweb's own, per profile: use `-p` for an account you'll come back to (a fresh workspace's go at `close`). agweb can't use the person's Apple Passwords or 1Password passkeys: for an account that has only those, `ask` the person to sign in, then add an agweb passkey in the account's security settings. `agweb -w task passkey list` lists the profile's passkeys; `passkey delete <id>` deletes one an agent made.
 
 **Filling a form and verifying it.**
 

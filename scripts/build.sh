@@ -34,7 +34,7 @@ plutil -insert AgwebCommit -string "$(git describe --always --dirty 2>/dev/null 
 # A throwaway copy must not offer itself as the default browser.
 $test && plutil -remove CFBundleURLTypes "$app/Contents/Info.plist"
 $test && plutil -replace CFBundleIdentifier -string "$(plutil -extract CFBundleIdentifier raw Resources/Info.plist).test" "$app/Contents/Info.plist"
-cp -f Resources/AppIcon.icns Resources/defuddle.js Resources/defuddle-LICENSE "$app/Contents/Resources/"
+cp -f Resources/AppIcon.icns Resources/defuddle.js Resources/defuddle-LICENSE Resources/public_suffix_list.dat "$app/Contents/Resources/"
 cp -f skill/SKILL.md "$app/Contents/Resources/skill/"
 cp -f "$bin/AgwebApp" "$app/Contents/MacOS/agweb"
 cp -f "$bin/agweb" "$app/Contents/Helpers/agweb"

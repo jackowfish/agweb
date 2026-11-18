@@ -40,7 +40,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/
 cp Resources/Info.plist "$app/Contents/Info.plist"
 # agweb version prints it; the "Version" commit made below changes only Info.plist, so this is the code built.
 plutil -insert AgwebCommit -string "$(git rev-parse --short HEAD)" "$app/Contents/Info.plist"
-cp Resources/AppIcon.icns Resources/defuddle.js Resources/defuddle-LICENSE "$app/Contents/Resources/"
+cp Resources/AppIcon.icns Resources/defuddle.js Resources/defuddle-LICENSE Resources/public_suffix_list.dat "$app/Contents/Resources/"
 cp skill/SKILL.md "$app/Contents/Resources/skill/"
 cp "$bin/AgwebApp" "$app/Contents/MacOS/agweb"
 cp "$bin/agweb" "$app/Contents/Helpers/agweb"

@@ -1,5 +1,6 @@
 import AgwebCore
 import AppKit
+import LocalAuthentication
 import SwiftUI
 
 /// UserDefaults keys behind Settings (⌘,).
@@ -8,7 +9,7 @@ enum Settings {
     /// never changes or deletes the person's.
     static let store: UserDefaults = {
         let store = Agweb.isDefaultRoot ? .standard : UserDefaults(suiteName: Agweb.settingsSuite(root: Agweb.root))!
-        store.register(defaults: [showUsage: true, adBlock: true])
+        store.register(defaults: [showUsage: true, adBlock: true, passkeys: true])
         return store
     }()
     static let showUsage = "dashboardShowsUsage"
@@ -16,6 +17,7 @@ enum Settings {
     static let columns = "dashboardColumns"
     static let textSize = "textSize"
     static let adBlock = "blockAds"
+    static let passkeys = "agwebPasskeys"
 }
 
 /// The sidebar's and the dashboard's text; pages have their own zoom (⌘+, ⌘−).
@@ -28,7 +30,78 @@ enum TextSize: Int, CaseIterable {
     var scale: CGFloat { [0.9, 1, 1.25][rawValue] }
 }
 
-struct SettingsView: View {
+/// Agweb's passkeys, one section per profile (and one per fresh workspace holding in-memory passkeys). Anyone sees
+/// sites and users (as `agweb passkey list` does); deleting waits for the Mac owner's check.
+struct PasskeySettings: View {
+    @AppStorage(Settings.passkeys, store: Settings.store) private var enabled = true
+    private let passkeys = Passkeys.shared
+    @State private var deleting: PasskeyEntry?
+    @State private var problem: String?
+
+    var body: some View {
+        let _ = passkeys.revision
+        let keys = passkeys.entries()
+        let groups = Set(keys.map(\.group) + Profiles.names.map { "profile \($0)" }).sorted()
+        Form {
+            Section {
+                Toggle("Answer passkey requests with Agweb's passkeys", isOn: $enabled)
+                    .onChange(of: enabled) { passkeys.settingChanged() }
+            } footer: {
+                Text("Each profile's passkeys. Agents sign up and sign in with them with no prompt; they delete only what an agent made. "
+                     + (passkeys.store is KeychainPasskeyStore ? "Kept in your login Keychain." : "This instance runs on its own folder and keeps them in a file there."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if groups.isEmpty {
+                Section { Text("None yet. Profiles appear here once a workspace is opened with -p NAME.").foregroundStyle(.secondary) }
+            }
+            ForEach(groups, id: \.self) { group in
+                let rows = keys.filter { $0.group == group }
+                Section(group.prefix(1).uppercased() + group.dropFirst()) {
+                    if rows.isEmpty { Text("No passkeys").foregroundStyle(.secondary) }
+                    ForEach(rows) { entry in row(entry) }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 600, height: 600)
+        .confirmationDialog("Delete the passkey for \(deleting?.passkey.label ?? "")?",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Delete", role: .destructive) {
+                if let deleting { delete(deleting) }
+                deleting = nil
+            }
+        } message: { Text("Agweb can no longer sign in with it. The site still lists it until you remove it in the account's settings there.") }
+        .alert("Passkeys", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {} message: { Text(problem ?? "") }
+    }
+
+    private func row(_ entry: PasskeyEntry) -> some View {
+        let date = Date.FormatStyle(date: .abbreviated, time: .omitted)
+        let user = entry.passkey.userName.isEmpty ? entry.passkey.displayName : entry.passkey.userName
+        return HStack(alignment: .firstTextBaseline) {
+            Image(systemName: "person.badge.key").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.passkey.rpID)
+                Text([user, entry.passkey.byPerson == false ? "made by an agent" : "",
+                      entry.passkey.lastUsed.map { "used \($0.formatted(date))" } ?? "created \(entry.passkey.created.formatted(date))"]
+                    .filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button { deleting = entry } label: { Image(systemName: "trash") }.help("Delete this passkey")
+        }
+        .buttonStyle(.borderless)
+    }
+
+    /// After the Mac owner's check (Touch ID or the login password).
+    private func delete(_ entry: PasskeyEntry) {
+        Task {
+            guard (try? await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "delete a passkey")) == true else { return }
+            do { try entry.delete() } catch { problem = "\(error)" }
+        }
+    }
+}
+
+struct GeneralSettings: View {
     @AppStorage(Settings.showUsage, store: Settings.store) private var showUsage = true
     @AppStorage(Settings.columns, store: Settings.store) private var columns = 0
     @AppStorage(Settings.textSize, store: Settings.store) private var textSize = TextSize.medium
@@ -91,9 +164,23 @@ struct SettingsView: View {
 
 @MainActor
 final class SettingsWindow: NSObject {
+    /// Toolbar tabs, as in every macOS app's Settings; the window takes each tab's size and title.
     private lazy var window: NSWindow = {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
-        window.title = "Settings"
+        let tabs = NSTabViewController()
+        tabs.tabStyle = .toolbar
+        for (title, symbol, view) in [("General", "gearshape", AnyView(GeneralSettings())), ("Passkeys", "person.badge.key", AnyView(PasskeySettings()))] {
+            let host = NSHostingController(rootView: view)
+            host.sizingOptions = .preferredContentSize
+            // The tab controller gives the window the selected tab's view controller title; without one it's "Untitled".
+            host.title = title
+            let item = NSTabViewItem(viewController: host)
+            item.label = title
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            tabs.addTabViewItem(item)
+        }
+        let window = NSWindow(contentViewController: tabs)
+        window.title = "General"
+        window.toolbarStyle = .preference
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.center()

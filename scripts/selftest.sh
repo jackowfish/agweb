@@ -8,10 +8,11 @@ dir=$(mktemp -d /tmp/agweb-test.XXXXXX)
 export AGWEB_ROOT="$dir/r"
 unset AGWEB_PROFILE AGWEB_WORKSPACE
 # Every command at once (the checks about human pace use `paced`), and tabs hide 3 s after a command, not 30.
-export AGWEB_INSTANT=1 AGWEB_AWAKE_SECONDS=3
+# A page may use passkeys 2 s after a command, not 10.
+export AGWEB_INSTANT=1 AGWEB_AWAKE_SECONDS=3 AGWEB_PASSKEY_SECONDS=2
 agweb=${AGWEB_CLI:-$PWD/../bin/agweb}
 cp testpage.html "$dir/index.html"
-cp frame.html frames.html side.html redirect.html later.html "$dir/"
+cp frame.html frames.html side.html redirect.html later.html passkey.html "$dir/"
 # The test build's bundle id (build.sh --test adds .test); the person's frame is checked under the id without it.
 test_domain=$(plutil -extract CFBundleIdentifier raw "$(dirname "$(realpath "$agweb")")/../Info.plist")
 domain=${test_domain%.test}
@@ -787,6 +788,47 @@ check "Page" -w sec fill '#pw' secret
 if [ "$secure_before" != 0 ]; then printf 'skip  secure input was already on (another app holds it)\n'
 else sleep 1; [ "$(secure)" = 0 ] || fail "a password field focused in the background left secure input on"; fi
 check "workspace sec closed" -w sec close
+echo "== passkeys: agweb is the authenticator; the page checks what a site checks"
+pk="http://127.0.0.1:$port/passkey.html"
+pkout() { "$agweb" -w pk --raw eval "document.getElementById('out').textContent" 2>/dev/null; }
+check "Title: passkeys" -w pk open "$pk" -p selftest-pk
+check "no passkeys in profile selftest-pk" -w pk passkey list
+check "passkey created for 127.0.0.1 (user tester)" -w pk click '#reg'
+check "registered instanceof=true rk=true" -w pk --raw eval "document.getElementById('out').textContent"
+check "signed in with a passkey for 127.0.0.1 (user tester)" -w pk click '#signin'
+check "^verified user-1$" -w pk --raw eval "document.getElementById('out').textContent"
+check "refused: this profile already has a passkey" -w pk click '#again'
+check "InvalidStateError" -w pk --raw eval "document.getElementById('out').textContent"
+check "refused: 127.0.0.1 can't use passkeys for example.com" -w pk click '#badrp'
+check "Page" -w pk click '#abort'
+case "$(pkout)" in AbortError*) printf 'ok    an aborted request\n' ;; *) fail "an aborted request: $(pkout)" ;; esac
+check "Page" -w pk click '#srcdoc'
+sleep 0.5
+case "$(pkout)" in "srcdoc patched") printf 'ok    an inline frame gets the shim\n' ;; *) fail "an inline frame: $(pkout)" ;; esac
+# The page's own timer, after the agent's 2 s grace and before the tab hides (3 s): refused.
+check "Page" -w pk eval "() => { setTimeout(() => signin(), 2500) }"
+sleep 3
+pkv=$(pkout)
+case "$pkv" in "NotAllowedError: passkeys answer only"*) printf 'ok    a page alone gets no passkey\n' ;; *) fail "a page's timer used a passkey: $pkv" ;; esac
+printf '<title>xpk</title><pre id=out></pre><iframe src="http://localhost:%s/passkey.html#frame"></iframe><script>addEventListener("message", e => out.textContent = "frame: " + e.data)</script>' "$port" >"$dir/xpk.html"
+check "Title: xpk" -w pk goto "http://127.0.0.1:$port/xpk.html"
+check "Result" -w pk wait --text="frame:"
+case "$(pkout)" in *"a frame from another site can't use"*) printf 'ok    a cross-site frame gets no passkey\n' ;; *) fail "a cross-site frame: $(pkout)" ;; esac
+pkid=$("$agweb" -w pk passkey list | sed -n 's/^- \([^:]*\): 127.0.0.1.*/\1/p')
+check "deleted the passkey for 127.0.0.1" -w pk passkey delete "$pkid"
+fails "no passkey $pkid" -w pk passkey delete "$pkid"
+check "Title: passkeys" -w pk goto "$pk"
+check "refused: no agweb passkey for 127.0.0.1" -w pk click '#signin'
+check "passkey created" -w pk click '#reg'
+check "workspace pk closed" -w pk close
+grep -q selftest-pk "$AGWEB_ROOT/passkeys.json" 2>/dev/null || fail "the profile's passkeys were not saved"
+[ "$(stat -f %Lp "$AGWEB_ROOT/passkeys.json")" = 600 ] || fail "passkeys.json is not 0600"
+check "Title: passkeys" -w pkf open "$pk"
+check "passkey created" -w pkf click '#reg'
+check "fresh workspace pkf, in memory" -w pkf passkey list
+check "workspace pkf closed" -w pkf close
+check "profile selftest-pk deleted" profile-delete selftest-pk
+! grep -q selftest-pk "$AGWEB_ROOT/passkeys.json" || fail "a deleted profile's passkeys stayed"
 
 echo "== an idle tab nobody watches is hidden; a command wakes it"
 check "Title" -w vis open "$u"

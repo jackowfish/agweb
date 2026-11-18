@@ -1095,4 +1095,76 @@ public enum PageScripts {
     public static let shortcut = """
     return window.__agwebShortcut ? window.__agwebShortcut(key, items) : 'none';
     """
+
+    /// Page world, every frame, before the page's scripts: passkey requests (`navigator.credentials` with `publicKey`)
+    /// go to agweb's own authenticator, which checks the origin natively; other credential kinds go to WebKit.
+    public static let passkeyShim = #"""
+    (() => {
+      const handler = window.webkit?.messageHandlers?.agwebPasskey;
+      if (!handler || !window.CredentialsContainer || !window.PublicKeyCredential) return;
+      const post = handler.postMessage.bind(handler);
+      const proto = CredentialsContainer.prototype;
+      const native = { create: proto.create, get: proto.get };
+      const toString = Object.prototype.toString;
+      const isBuffer = (v) => ArrayBuffer.isView(v) || toString.call(v) === '[object ArrayBuffer]';
+      const bytes = (v) => ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v);
+      const b64u = (v) => { let s = ''; for (const c of bytes(v)) s += String.fromCharCode(c); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+      const buffer = (s) => { const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/')); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out.buffer; };
+      const plain = (v) => isBuffer(v) ? b64u(v) : Array.isArray(v) ? v.map(plain)
+        : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)])) : v;
+      const define = (o, props) => { for (const [k, v] of Object.entries(props)) Object.defineProperty(o, k, { value: v, enumerable: true }); return o; };
+      const aborted = (signal) => signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+      const credential = (r, create) => {
+        const ext = r.credProps ? { credProps: { rk: true } } : {};
+        const response = Object.create(((create ? window.AuthenticatorAttestationResponse : window.AuthenticatorAssertionResponse) || Object).prototype);
+        let json;
+        if (create) {
+          define(response, { clientDataJSON: buffer(r.clientDataJSON), attestationObject: buffer(r.attestationObject),
+            getAuthenticatorData: () => buffer(r.authenticatorData), getPublicKey: () => buffer(r.publicKey),
+            getPublicKeyAlgorithm: () => -7, getTransports: () => ['internal'] });
+          json = { clientDataJSON: r.clientDataJSON, attestationObject: r.attestationObject, authenticatorData: r.authenticatorData,
+            publicKey: r.publicKey, publicKeyAlgorithm: -7, transports: ['internal'] };
+        } else {
+          define(response, { clientDataJSON: buffer(r.clientDataJSON), authenticatorData: buffer(r.authenticatorData),
+            signature: buffer(r.signature), userHandle: r.userHandle ? buffer(r.userHandle) : null });
+          json = { clientDataJSON: r.clientDataJSON, authenticatorData: r.authenticatorData, signature: r.signature, userHandle: r.userHandle ?? undefined };
+        }
+        return define(Object.create(PublicKeyCredential.prototype), { id: r.id, rawId: buffer(r.id), type: 'public-key',
+          authenticatorAttachment: 'platform', response, getClientExtensionResults: () => ({ ...ext }),
+          toJSON: () => ({ id: r.id, rawId: r.id, type: 'public-key', authenticatorAttachment: 'platform', clientExtensionResults: { ...ext }, response: json }) });
+      };
+      const ceremony = (kind, options) => {
+        const signal = options.signal;
+        if (signal?.aborted) return Promise.reject(aborted(signal));
+        // Autofill passkeys: nothing is offered by itself, so the request waits until the page aborts it.
+        if (options.mediation === 'conditional') {
+          if (kind === 'create') return Promise.reject(new DOMException('agweb creates passkeys only on request', 'NotAllowedError'));
+          return new Promise((_, reject) => signal?.addEventListener('abort', () => reject(aborted(signal)), { once: true }));
+        }
+        return new Promise((resolve, reject) => {
+          let done = false;
+          signal?.addEventListener('abort', () => { if (!done) { done = true; reject(aborted(signal)); } }, { once: true });
+          const publicKey = plain(options.publicKey);
+          post({ kind, publicKey, credProps: !!options.publicKey.extensions?.credProps }).then((r) => {
+            if (done) return;
+            done = true;
+            if (r?.error) reject(new DOMException(r.error.message, r.error.name)); else resolve(credential(r.credential, kind === 'create'));
+          }, (e) => { if (!done) { done = true; reject(new DOMException(String(e?.message ?? e), 'NotAllowedError')); } });
+        });
+      };
+      for (const kind of ['create', 'get']) {
+        Object.defineProperty(proto, kind, { configurable: true, writable: true, value: { [kind](options) {
+          return options?.publicKey ? ceremony(kind, options) : native[kind].apply(this, arguments);
+        } }[kind] });
+      }
+      const statics = {
+        isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(true),
+        isConditionalMediationAvailable: () => Promise.resolve(false),
+        getClientCapabilities: () => Promise.resolve({ conditionalCreate: false, conditionalGet: false, hybridTransport: false,
+          passkeyPlatformAuthenticator: true, userVerifyingPlatformAuthenticator: true, relatedOrigins: false,
+          signalAllAcceptedCredentials: false, signalCurrentUserDetails: false, signalUnknownCredential: false }),
+      };
+      for (const [k, v] of Object.entries(statics)) Object.defineProperty(PublicKeyCredential, k, { configurable: true, writable: true, value: v });
+    })();
+    """#
 }

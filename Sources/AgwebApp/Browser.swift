@@ -22,6 +22,7 @@ final class Browser {
     init() {
         console.browser = self
         NativeInput.onInput = { [weak self] webView in self?.tab(for: webView)?.agentInputAt = Date() }
+        Passkeys.shared.browser = self
         model.onDisplay = { [weak self] id, used in
             guard let self, let tab = self.model.displayedTab, tab.id == id else { return }
             self.mainWindow.bringToTop(tab.webView)
@@ -106,6 +107,8 @@ final class Browser {
     /// window must not redirect the agent's next commands.
     func addPopup(to workspace: Workspace, configuration: WKWebViewConfiguration, opener: Tab) -> Tab {
         let tab = makeTab(in: workspace, configuration: configuration, opener: opener)
+        // A sign-in popup asking for a passkey by itself counts as its opener's: the same click or command opened it.
+        (tab.passkeyInputAt, tab.agentUntil) = (opener.passkeyInputAt, opener.agentUntil)
         if workspace.busy {
             drive(tab)
             return tab
@@ -255,6 +258,9 @@ final class Browser {
                     workspace.actedOn?.lastUsed = workspace.lastUsed
                 }
                 workspace.busy = false
+                if workspace.passkeyCommand { workspace.current?.agentUntil = Date().addingTimeInterval(Passkeys.grace) }
+                // A command returning before it sets the flag (`list`) must not inherit the last one's.
+                workspace.passkeyCommand = false
                 // Only after a command that acted on a page (`list` or `cookie-list` polling must not keep a tab awake),
                 // and the tab it left current: a popup or tab-select moves the agent on.
                 if workspace.actedOn != nil, let tab = workspace.current {
@@ -408,6 +414,7 @@ final class Browser {
             workspace.lastCommand = Self.summary(request)
             workspace.lastCommandAt = Date()
             workspace.lastUsed = Date()
+            workspace.passkeyCommand = Passkeys.commands.contains(request.command)
             workspace.busy = true
             mainWindow.showQuietly()
             let tab = workspace.current ?? addTab(to: workspace)
@@ -432,9 +439,27 @@ final class Browser {
         workspace.lastCommand = Self.summary(request)
         workspace.lastCommandAt = Date()
         workspace.lastUsed = Date()
+        workspace.passkeyCommand = Passkeys.commands.contains(request.command)
         workspace.busy = true
 
         switch request.command {
+        case "passkey" where (args.first ?? "list") == "list":
+            let owner = PasskeyOwner(workspace)
+            let whose = workspace.profile.map { "profile \($0)" } ?? "fresh workspace \(workspace.name), in memory"
+            let off = Passkeys.shared.enabled ? "" : "\nPasskeys are off in Agweb's Settings: sites get no answer from agweb."
+            let list = Passkeys.shared.list(owner)
+            if list.isEmpty { return "no passkeys in \(whose); a site's sign-up or \"add a passkey\" button creates one" + off }
+            let date = Date.FormatStyle(date: .numeric, time: .shortened)
+            return "### Passkeys (\(whose))\n" + list.map { passkey in
+                "- \(passkey.id): \(passkey.label), created \(passkey.created.formatted(date))"
+                    + (passkey.lastUsed.map { ", last used \($0.formatted(date))" } ?? "")
+            }.joined(separator: "\n") + off
+        case "passkey" where args.first == "delete":
+            let id = try arg(1, "id")
+            let removed = try Passkeys.shared.agentDelete(id, PasskeyOwner(workspace))
+            return "deleted the passkey for \(removed.label); the site still lists it until it's removed in the account's settings there"
+        case "passkey":
+            throw Failure("use: agweb passkey list | passkey delete <id>")
         case "close":
             let video = await describeStop(workspace)
             closeWorkspace(workspace)
