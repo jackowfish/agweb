@@ -193,10 +193,13 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         // First, and quiet: a page asking by itself (a timer, an ad frame) must not fill the agent's Events.
         let now = Date()
         let workspace = tab.workspace
-        // During `ask` the tab is the person's: their click there asks them.
+        let personClicked = now.timeIntervalSince(tab.passkeyInputAt) < Self.grace
+        // During `ask` the tab is the person's: their click there asks them. So is a click of theirs after the agent's
+        // last command began, even inside the agent's window: it gets the sheet and the passkey is theirs.
         let byAgent = tab.asking == nil
             && ((workspace.busy && workspace.passkeyCommand && workspace.current === tab) || now < tab.agentUntil)
-        guard byAgent || now.timeIntervalSince(tab.passkeyInputAt) < Self.grace else {
+            && !(personClicked && tab.passkeyInputAt > workspace.lastCommandAt ?? .distantPast)
+        guard byAgent || personClicked else {
             throw Refusal("NotAllowedError", "passkeys answer only during an agent's command on this tab or right after the person's own click in it", quiet: true)
         }
         guard enabled else { throw Refusal("NotAllowedError", "passkeys are off in Agweb's Settings") }
@@ -275,18 +278,23 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
             }
             return same
         }
-        _ = try replaced()
+        let replacing = try !replaced().isEmpty
         let userName = Self.clean(user["name"] as? String), displayName = Self.clean(user["displayName"] as? String)
         let shown = userName.isEmpty ? displayName : userName
         return Prepared(
             title: "Create a passkey for \(rpID)?",
             detail: "Agweb keeps this passkey for \(shown.isEmpty ? "your account" : shown) \(place(tab.workspace)). "
-                + "Agents working there can sign in with it too. It isn't saved to Apple Passwords or 1Password; Settings ▸ Passkeys lists it.",
+                + "Agents working there can sign in with it too. It isn't saved to Apple Passwords or 1Password; Settings ▸ Passkeys lists it."
+                + (replacing ? " It replaces the passkey Agweb has for this account, which then no longer signs in." : ""),
             button: "Create Passkey"
         ) { [self] byPerson in
             let old = try replaced()
-            // Replacing the person's passkey keeps it theirs, so an agent can't then delete it.
-            let personMade = byPerson || old.contains { !((try? agentMade($0, store(owner))) ?? false) }
+            let replacesPersons = old.contains { !((try? agentMade($0, store(owner))) ?? false) }
+            // An agent deletes only what an agent made, and replacing is deleting.
+            if replacesPersons && !byPerson {
+                throw Refusal("InvalidStateError", "this profile has the person's passkey for that account on \(rpID); only the person can replace it")
+            }
+            let personMade = byPerson
             let key = P256.Signing.PrivateKey()
             var idBytes = [UInt8](repeating: 0, count: 16)
             guard SecRandomCopyBytes(kSecRandomDefault, idBytes.count, &idBytes) == errSecSuccess else { throw Refusal("NotAllowedError", "no random bytes for the passkey's id") }
