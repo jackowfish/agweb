@@ -37,6 +37,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   type <text>                   insert text at the focused element a character at a time, at a person's pace
                                 (input events, not key events; --submit: Enter after)
   press <key>                   native key press: Enter, Tab, Escape, ArrowDown, Shift+Tab, Meta+a
+                                (Meta+c, Meta+x and Meta+v use the workspace clipboard, never the person's)
   keydown | keyup <key>         hold or release a key
   upload <target> <file...>     click a file input and answer its chooser with the files
   download <target>             click and wait for the download it starts (--filename: where to save it)
@@ -68,6 +69,9 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   cookie-list [--domain --path] | cookie-get <name> | cookie-delete <name> | cookie-clear
   cookie-set <name> <value>     --domain (default: this page's host), --path, --expires=unix, --httpOnly, --secure,
                                 --sameSite=Lax|Strict|None
+  clipboard                     what pages in this workspace copied (a copy button, Meta+c); --raw prints the text.
+                                Pages never write the person's clipboard while agents drive them
+  clipboard-set <text>          put text in the workspace clipboard: press Meta+v pastes it, page clipboard reads get it
   state-save [file]             cookies and this origin's localStorage as Playwright storage-state JSON
   state-load <file>             put them back; localStorage lands when its origin next loads
   dialog-accept [text] | dialog-dismiss   how confirm() and prompt() are answered (default dismiss)

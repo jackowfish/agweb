@@ -542,9 +542,10 @@ start=$(now)
 paced "^scrolled" -w alpha scroll-into-view '#far'
 /usr/bin/python3 -c "import sys; sys.exit(0 if $(now) - $start > 0.25 else 1)" || fail "scroll-into-view without --instant did not glide"
 fails "has no size on screen" -w alpha scroll-into-view '#gone' --timeout=0
-# A clipboard read is refused at once: WebKit's Paste menu would pop up at the real pointer.
+# A clipboard read after an agent's click gets the workspace clipboard at once: WebKit's Paste menu would pop up at
+# the real pointer.
 check "Page" -w alpha click '#clip'
-check '^NotAllowedError$' -w alpha --raw eval 'clip.dataset.got'
+check '^read$' -w alpha --raw eval 'clip.dataset.got'
 check "Page" -w alpha eval "scrollTo(0, 0)"
 check "popup opened as tab 1: .*index.html?deployed" -w alpha click 'text=deploy to TEST'
 check "0: (current)" -w alpha tab-close 1
@@ -702,6 +703,54 @@ check "Title: shell" -w xs open "http://127.0.0.1:$port/xshell.html"
 check '^  - button "Low" \[ref=e2\]' -w xs snapshot
 check 'button "low ok"' -w xs click e2
 check "workspace xs closed" -w xs close
+
+echo "== a page's copy lands in the workspace clipboard, never the person's"
+# The person's clipboard is only read, never written: it must hold none of the strings these pages copy. (Its change
+# count would also move when the person copies something meanwhile.)
+printf '<title>xclip</title><button onclick="navigator.clipboard.writeText(`from the frame`)">frame copy</button>' >"$dir/xclip.html"
+printf '<title>clip</title><button id=wt onclick="navigator.clipboard.writeText(`via writeText`)">wt</button><button id=ex onclick="document.addEventListener(`copy`, e => { e.clipboardData.setData(`text/plain`, `via setData`); e.preventDefault() }, { once: true }); document.execCommand(`copy`)">ex</button><button id=late onclick="setTimeout(() => navigator.clipboard.writeText(`late copy`), 1200)">late</button><button id=rd onclick="navigator.clipboard.readText().then(t => r.textContent = `read ` + t, e => r.textContent = e.name)">rd</button><button id=sel onclick="getSelection().selectAllChildren(para); document.execCommand(`copy`)">sel</button><p id=para>para text</p><input id=f value="field text"><div id=otp><input><input><input><input></div><p id=r></p><iframe src="http://localhost:%s/xclip.html"></iframe><script>otp.addEventListener(`paste`, e => { e.preventDefault(); [...otp.children].forEach((i, n) => i.value = e.clipboardData.getData(`text/plain`)[n] || ``) })</script>' "$port" >"$dir/clip.html"
+# A timer's write long after any input fails, as in WebKit (one within ~5 s of a click succeeds there too).
+printf '<title>noclip</title><p id=r>none</p><script>setInterval(() => navigator.clipboard.writeText(`no gesture`).then(() => r.textContent = `leaked`, e => r.textContent = e.name), 100)</script>' >"$dir/noclip.html"
+check "Title: noclip" -w cbq open "http://127.0.0.1:$port/noclip.html"
+sleep 6
+check '^NotAllowedError$' -w cbq --raw eval 'r.textContent'
+check "the workspace clipboard is empty" -w cbq clipboard
+# WebKit hands a key the page leaves alone back to the app as a new event; it is still the agent's, so the timer's
+# writes after it stay off the person's clipboard (checked at the end).
+check "Page" -w cbq eval "() => { document.body.append(Object.assign(document.createElement('input'), { id: 'k' })) }"
+check "Page" -w cbq click '#k'
+for key in End Escape Tab Meta+z; do check "Page" -w cbq press $key; done
+check '^no gesture$' -w cbq --raw clipboard
+check "workspace cbq closed" -w cbq close
+check "Title: clip" -w cb open "http://127.0.0.1:$port/clip.html"
+check 'copied "via writeText" to the workspace clipboard' -w cb click '#wt'
+check 'copied "via setData"' -w cb click '#ex'
+check '^via setData$' -w cb --raw clipboard
+check "Page" -w cb click '#late'
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ "$("$agweb" -w cb --raw clipboard 2>/dev/null)" = "late copy" ] && break; sleep 0.5; done
+check 'copied "late copy"' -w cb snapshot
+check "Page" -w cb click '#rd'
+check '^read late copy$' -w cb --raw eval 'r.textContent'
+# A focused field doesn't take over a copy of what the page selected elsewhere.
+check "Page" -w cb click '#f'
+check 'copied "para text"' -w cb click '#sel'
+check "Page" -w cb click '#f'
+check "Page" -w cb press Meta+a
+check 'copied "field text"' -w cb press Meta+c
+check "holds 4 characters" -w cb clipboard-set 4821
+check "Page" -w cb click '#otp input >> nth=0'
+check "the page's paste handler took it" -w cb press Meta+v
+check '^4821$' -w cb --raw eval "[...otp.children].map(i => i.value).join('')"
+ref=$("$agweb" -w cb snapshot | sed -n 's/.*button "frame copy" \[ref=\(e[0-9]*\)\].*/\1/p')
+check 'copied "from the frame"' -w cb click "${ref:-e0}"
+check "from http://localhost:$port/xclip.html" -w cb clipboard
+# Another site never reads what the agent copied on this one; what clipboard-set gave, any page may.
+check '^NotAllowedError$' -w cb --raw eval "() => (r.textContent = '', rd.click(), new Promise(f => setTimeout(() => f(r.textContent), 300)))"
+check "holds" -w cb clipboard-set given
+check '^read given$' -w cb --raw eval "() => (r.textContent = '', rd.click(), new Promise(f => setTimeout(() => f(r.textContent), 300)))"
+pbpaste | grep -q -e 'no gesture' -e 'via writeText' -e 'via setData' -e 'late copy' -e 'field text' -e 'from the frame' && fail "a page wrote the person's clipboard"
+fails "clipboard-set <text>, then agweb press Meta+v" -w cb paste
+check "workspace cb closed" -w cb close
 
 echo "== an idle tab nobody watches is hidden; a command wakes it"
 check "Title" -w vis open "$u"

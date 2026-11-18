@@ -4,7 +4,7 @@ public enum Commands {
         "hover", "mousemove", "mousedown", "mouseup", "mousewheel", "fill", "select", "type", "press", "keydown", "keyup",
         "upload", "download", "eval", "highlight", "scroll-into-view", "screenshot", "pdf", "resize", "emulate", "wait", "video-start", "video-stop",
         "console", "requests", "request", "request-headers", "request-body", "response-headers", "response-body", "route",
-        "route-list", "unroute", "cookie-list", "cookie-get", "cookie-set", "cookie-delete", "cookie-clear", "state-save",
+        "route-list", "unroute", "cookie-list", "cookie-get", "cookie-set", "cookie-delete", "cookie-clear", "clipboard", "clipboard-set", "state-save",
         "state-load", "dialog-accept", "dialog-dismiss", "ask", "tab-list", "tab-new", "tab-select", "tab-close", "show", "close",
         "list", "close-all", "profile-list", "profile-delete", "adblock", "dashboard", "install-skill", "install-cli", "update", "quit", "version",
     ]
@@ -14,11 +14,12 @@ public enum Commands {
         "tabs": "tab-list", "tab": "tab-list", "list-tabs": "tab-list", "select-tab": "tab-select", "switch-tab": "tab-select",
         "switch": "tab-select", "sessions": "list", "sleep": "wait", "network": "requests", "navigate": "goto", "back": "go-back", "back-forward": "history", "back-forward-list": "history",
         "forward": "go-forward", "evaluate": "eval", "markdown": "text", "content": "text", "read": "text", "search": "find", "grep": "find", "triple-click": "click", "scroll": "mousewheel",
-        "upgrade": "update", "scroll-to": "scroll-into-view", "scrollintoview": "scroll-into-view", "scroll-into-view-if-needed": "scroll-into-view",
+        "upgrade": "update", "copy": "clipboard", "clipboard-get": "clipboard", "clipboard-read": "clipboard", "clipboard-write": "clipboard-set", "clipboard-copy": "clipboard-set", "scroll-to": "scroll-into-view", "scrollintoview": "scroll-into-view", "scroll-into-view-if-needed": "scroll-into-view",
     ]
 
     public static func unknown(_ name: String) -> String {
         if name == "video-chapter" { return "video-chapter is gone: recordings never put text over the page" }
+        if name == "paste" || name == "clipboard-paste" { return "no paste command: agweb clipboard-set <text>, then agweb press Meta+v" }
         if name == "run-code" { return "no run-code: agweb has no Playwright engine; use role=/text= targets, eval and separate commands" }
         let suggestion = guesses[name] ?? all.map { ($0, distance($0, name)) }.filter { $0.1 <= 2 }.min { $0.1 < $1.1 }?.0
         return "unknown command '\(name)'" + (suggestion.map { "; did you mean \($0)?" } ?? "; run agweb help")

@@ -5,7 +5,7 @@ import Foundation
 public enum CommandLog {
     /// Commands whose arguments are text the agent supplied: passwords, cookies, code, saved state, mocked bodies.
     /// `fill` and `select` keep their target.
-    public static let textCommands: Set<String> = ["type", "eval", "fill", "select", "dialog-accept", "cookie-set", "state-load", "route"]
+    public static let textCommands: Set<String> = ["type", "eval", "fill", "select", "dialog-accept", "cookie-set", "clipboard-set", "state-load", "route"]
     /// Options logged with their value; any other is logged as present only (route's --header and --body carry tokens).
     static let shownOptions: Set<String> = ["timeout", "text", "url", "filename", "path", "profile", "max-results", "download-dir", "filter",
                                             "color-scheme", "button", "delay", "width", "height", "status"]

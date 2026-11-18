@@ -21,6 +21,7 @@ final class Browser {
 
     init() {
         console.browser = self
+        NativeInput.onInput = { [weak self] webView in self?.tab(for: webView)?.agentInputAt = Date() }
         model.onDisplay = { [weak self] id in
             guard let self, let tab = self.model.displayedTab, tab.id == id else { return }
             self.mainWindow.bringToTop(tab.webView)
@@ -130,7 +131,7 @@ final class Browser {
         tab.webView.navigationDelegate = nil
         tab.webView.uiDelegate = nil
         // Its handlers hold the console sink; a workspace's own controller is cleaned up with the workspace.
-        if let own = tab.ownController { for handler in Workspace.handlers { own.removeScriptMessageHandler(forName: handler) } }
+        tab.ownController?.removeAllScriptMessageHandlers()
         mainWindow.remove(tab.webView)
         workspace.tabs.remove(at: index)
         if workspace.currentID == tab.id {
@@ -181,7 +182,7 @@ final class Browser {
         // From the sidebar, outside the workspace's queue; an agent's close has already stopped it.
         if workspace.recorder != nil { Task { _ = await describeStop(workspace) } }
         for tab in workspace.tabs { closeTab(tab) }
-        for handler in Workspace.handlers { workspace.contentController.removeScriptMessageHandler(forName: handler) }
+        workspace.contentController.removeAllScriptMessageHandlers()
         model.workspaces.removeAll { $0 === workspace }
         if let profile = workspace.profile, !model.workspaces.contains(where: { $0.profile == profile }) { Profiles.release(profile) }
         scheduleSave()
@@ -382,6 +383,7 @@ final class Browser {
             workspace.busy = true
             mainWindow.showQuietly()
             let tab = workspace.current ?? addTab(to: workspace)
+            tab.agentInputAt = Date()
             await wake(tab)
             if let url = args.first { try await tab.goto(try Address.url(url)) } else { try await tab.loadIfPending() }
             tab.markSeen()
@@ -473,6 +475,14 @@ final class Browser {
             return "removed \(before - workspace.routes.count) routes\n" + routeList(workspace)
         case "cookie-list", "cookie-get", "cookie-set", "cookie-delete", "cookie-clear":
             return try await cookies(request, in: workspace)
+        case "clipboard":
+            return workspace.clipboard?.describe()
+                ?? "### Result\n\"\"\n### Events\n- the workspace clipboard is empty: no page here copied anything yet (clipboard-set <text> puts text there)"
+        case "clipboard-set":
+            guard args.count == 1 else { throw Failure("clipboard-set takes one text; quote it: agweb clipboard-set 'two words'") }
+            let text = try arg(0, "text")
+            workspace.clipboard = Clip(items: [Clip.Item(type: "text/plain", value: text)], source: "clipboard-set")
+            return "the workspace clipboard holds \(text.count) characters: press Meta+v pastes them at the focus, and the page's clipboard reads get them"
         default:
             break
         }
@@ -485,6 +495,9 @@ final class Browser {
         await wake(tab)
         // A tab reopened at launch loads on first use.
         if request.command != "goto" { try await tab.loadIfPending() }
+        // Their scripts run with a user gesture too (a --js click, eval), so the page may copy. After the load: a page
+        // commit forgets the input given to the page before.
+        if Self.reportsChanges.contains(request.command) || Self.mayRunPageCode.contains(request.command) { tab.agentInputAt = Date() }
         let webView = tab.webView
         // Otherwise a go-back from there lands on a page the agent never saw, with nothing saying why.
         if tab.movedSinceSeen {
@@ -749,19 +762,45 @@ final class Browser {
         if Self.pickerKinds.contains(focused), Self.pickerKeys.contains(combo.lowercased().components(separatedBy: "+").last ?? "") {
             throw Failure("\(combo) would open the focused \(focused)'s native picker; use: agweb fill <target> <value>")
         }
-        try await stroke(tab, combo, phases: phases, hold: instant ? 0 : tab.motion.keyHold())
+        let shortcut = phases.contains(.keyDown) ? NativeInput.editShortcut(combo, held: tab.held) : nil
+        let frame = shortcut == nil ? nil : await tab.focusedFrame()
+        // While the tab still has the keyboard: giving it back clears a contenteditable's selection.
+        try await stroke(tab, combo, phases: phases, hold: instant ? 0 : tab.motion.keyHold()) {
+            if let shortcut { try await self.editShortcut(tab, shortcut, in: frame) }
+        }
         if phases.contains(.keyUp) { await tab.settle() }
+    }
+
+    /// ⌘A, ⌘C, ⌘X and ⌘V edit only when a person presses them (they are menu key equivalents), so the clipboard hook
+    /// does what they would after the key, with the workspace clipboard: never the person's (ClipboardRouting.swift).
+    private func editShortcut(_ tab: Tab, _ key: String, in frame: Frame?) async throws {
+        let clip = tab.workspace.clipboard
+        // Short: the person's typing goes to this tab until it returns.
+        let done = try await tab.call(PageScripts.shortcut, ["key": key, "items": clip?.triples ?? []], world: .page, frame: frame, timeout: 3)
+        switch (key, done) {
+        case (_, "none"): tab.events.append("this frame has no clipboard hook (it loaded before agweb added one); reload the page")
+        case (_, "key"): tab.events.append("the page's own keydown handler took Meta+\(key)")
+        case (_, "denied"): tab.events.append("Meta+\(key) did nothing: the page had no user gesture")
+        case ("v", "pasted"): tab.events.append("pasted \(clip?.summary ?? "") from the workspace clipboard")
+        case ("v", "page") where clip?.text != nil: tab.events.append("pasted \(clip?.summary ?? ""): the page's paste handler took it")
+        case ("v", _) where clip?.text == nil: tab.events.append("nothing pasted: the workspace clipboard has no text (agweb clipboard-set <text>)")
+        case ("v", "nowhere"): tab.events.append("nothing pasted: the focus is not in a text field")
+        default: break
+        }
     }
 
     /// Sends a key to the tab, held down for `hold` seconds when both phases are sent, as a finger holds it. The tab
     /// is first responder only while WebKit takes the key, and gets the keyboard back right away, not after the
     /// page settles: the person may be typing.
-    private func stroke(_ tab: Tab, _ combo: String, phases: [NSEvent.EventType] = [.keyDown, .keyUp], hold: Double) async throws {
+    private func stroke(_ tab: Tab, _ combo: String, phases: [NSEvent.EventType] = [.keyDown, .keyUp], hold: Double,
+                        then: () async throws -> Void = {}) async throws {
         let window = mainWindow.window
         var previous = window.firstResponder
         if let editor = previous as? NSTextView, editor.isFieldEditor { previous = editor.delegate as? NSResponder }
         // Another agent's press may have left its hidden tab first responder; the person types in the displayed one.
         if previous is WKWebView { previous = model.displayedTab?.webView }
+        NativeInput.stroking.insert(ObjectIdentifier(tab.webView))
+        defer { NativeInput.stroking.remove(ObjectIdentifier(tab.webView)) }
         if phases.count == 2, hold > 0 {
             try NativeInput.press(tab.webView, combo: combo, phases: [.keyDown], held: &tab.held)
             try? await Task.sleep(for: .seconds(hold))
@@ -769,8 +808,13 @@ final class Browser {
         } else {
             try NativeInput.press(tab.webView, combo: combo, phases: phases, held: &tab.held)
         }
+        var failure: Error?
+        do { try await then() } catch { failure = error }
+        // An answer from the page comes after WebKit has handed back any key it left alone (NativeInput.sentKeys).
+        if (try? await tab.call("return ''", timeout: 2)) != nil { NativeInput.settled(tab.webView) }
         try? await Task.sleep(for: .milliseconds(50))
         if let previous, previous !== tab.webView, window.firstResponder === tab.webView { window.makeFirstResponder(previous) }
+        if let failure { throw failure }
     }
 
     /// A right click asks WebKit for a context menu, which would pop up on the person's screen.
@@ -1426,6 +1470,9 @@ final class Browser {
             text.replacingOccurrences(of: digits.map(String.init).joined(separator: "[ -]?"), with: "<hidden>", options: .regularExpression)
         }
     }
+
+    /// Commands besides the actions that can make the page run its own code with a user gesture.
+    private static let mayRunPageCode: Set = ["eval", "keydown", "keyup", "mousedown", "mouseup", "upload", "download"]
 
     /// Actions whose reply says what they changed.
     private static let reportsChanges: Set = ["click", "dblclick", "check", "uncheck", "hover", "fill", "select", "type", "press", "drag"]

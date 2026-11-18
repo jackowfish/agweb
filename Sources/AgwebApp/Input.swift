@@ -17,6 +17,32 @@ enum MouseButton: String {
 /// button from mousedown.
 @MainActor
 enum NativeInput {
+    /// Told of each click and key sent, so a page's copy that follows lands in the agent's clipboard (Tab.agentInputAt).
+    static var onInput: ((WKWebView) -> Void)?
+    /// The tabs agents' key strokes hold first responder for: the person's typing meanwhile lands there, but is not
+    /// their input to it (AgentWindow).
+    static var stroking: Set<ObjectIdentifier> = []
+    /// Key-downs sent and not yet settled. WebKit hands a key the page left alone back to NSApp.sendEvent, which passes
+    /// it to the window (sendEvent, then performKeyEquivalent) and, for a ⌘-key, the Edit menu; it comes back as a new
+    /// event, so only its key code and modifiers tell it apart (AgentWindow). It comes back before any later answer
+    /// from the page, so once one arrives (`settled`) a key-down like it is the person's.
+    private static var sentKeys: [(code: UInt16, modifiers: NSEvent.ModifierFlags, at: TimeInterval, to: ObjectIdentifier)] = []
+    private static let keyModifiers: NSEvent.ModifierFlags = [.command, .shift, .control, .option]
+
+    /// Whether the key-down is one sent here coming back. Not used up: the window sees it twice.
+    static func isSent(_ event: NSEvent) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        // A page that never answered: its keys can't stay the agent's for good.
+        sentKeys.removeAll { now - $0.at > 5 }
+        let modifiers = event.modifierFlags.intersection(keyModifiers)
+        return event.type == .keyDown && sentKeys.contains { $0.code == event.keyCode && $0.modifiers == modifiers }
+    }
+
+    /// The page answered after the keys sent to it: any that would come back has.
+    static func settled(_ webView: WKWebView) {
+        sentKeys.removeAll { $0.to == ObjectIdentifier(webView) }
+    }
+
     /// WKWebView has no mouseMoved: of its own (real moves come through its tracking area), so this uses the
     /// testing SPI that feeds a move into the same path. Pages only see it because AgentWindow reports key.
     /// With a button held it is a drag instead.
@@ -38,6 +64,7 @@ enum NativeInput {
 
     static func button(_ webView: WKWebView, _ button: MouseButton = .left, down: Bool, at cssPoint: CGPoint, viewportHeight: CGFloat,
                        clickCount: Int = 1, held: Held = Held()) throws {
+        onInput?(webView)
         switch button {
         case .left:
             let event = try mouse(down ? .leftMouseDown : .leftMouseUp, webView, cssPoint, viewportHeight, clickCount: clickCount, held: held)
@@ -112,11 +139,15 @@ enum NativeInput {
             return
         }
         let key = try parse(combo)
+        onInput?(webView)
         for type in phases {
             let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: key.modifiers.union(held.modifiers),
                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                          context: nil, characters: key.characters, charactersIgnoringModifiers: key.unmodified,
                                          isARepeat: false, keyCode: key.code)!
+            if type == .keyDown {
+                sentKeys = Array(sentKeys.suffix(15)) + [(key.code, event.modifierFlags.intersection(keyModifiers), ProcessInfo.processInfo.systemUptime, ObjectIdentifier(webView))]
+            }
             if type == .keyDown { webView.keyDown(with: event) } else { webView.keyUp(with: event) }
         }
     }
@@ -171,6 +202,13 @@ enum NativeInput {
         case "\t": return "Tab"
         default: return keys[char] == nil ? nil : String(char)
         }
+    }
+
+    /// The editing shortcut a combo makes with what is held: "a", "c", "x" or "v" for ⌘ and that letter alone.
+    static func editShortcut(_ combo: String, held: Held) -> String? {
+        guard let key = try? parse(combo), key.modifiers.union(held.modifiers).intersection([.command, .shift, .control, .option]) == .command,
+              ["a", "c", "x", "v"].contains(key.unmodified) else { return nil }
+        return key.unmodified
     }
 
     /// Playwright-style combos: "Enter", "Shift+Tab", "Meta+a", "A", "?".

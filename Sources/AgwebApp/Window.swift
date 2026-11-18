@@ -55,6 +55,9 @@ final class MainWindow: NSObject, NSWindowDelegate {
         window.center()
         super.init()
         (window as? AgentWindow)?.onSideButton = { [weak self] forward in forward ? self?.goForward(nil) : self?.goBack(nil) }
+        (window as? AgentWindow)?.onPersonInput = { [weak model] webView in
+            model?.workspaces.lazy.flatMap(\.tabs).first { $0.webView === webView }?.personInputAt = Date()
+        }
         window.delegate = self
         installToolbar()
         // After the toolbar so it can't shift the frame. Not `setFrameAutosaveName`: AppKit drops a frame saved on a
@@ -383,12 +386,41 @@ final class AgentWindow: NSWindow {
     /// The person's mouse buttons 4 and 5 go back and forward, as in Safari; WebKit ignores them. Agents' clicks
     /// go to the web view directly and never pass here.
     var onSideButton: ((_ forward: Bool) -> Void)?
+    /// The person's click or key in a tab, before WebKit gets it: a page's copy that follows goes to the person's
+    /// clipboard (ClipboardRouting.swift). Agents' clicks never pass here; their keys can, see NativeInput.isSent. The
+    /// person's keys reach the window only while agweb is in front.
+    var onPersonInput: ((WKWebView) -> Void)?
 
     override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            // From the frame view, whose coordinates are the window's: it has the toolbar over the page, so a click on
+            // the address field is not one on the page.
+            if let frame = contentView?.superview, let view = frame.hitTest(event.locationInWindow) { notePerson(view) }
+        case .keyDown:
+            if !NativeInput.isSent(event), NSApp.isActive, let view = firstResponder as? NSView { notePerson(view) }
+        default: break
+        }
         if [.otherMouseDown, .otherMouseUp].contains(event.type), [3, 4].contains(event.buttonNumber) {
             if event.type == .otherMouseDown { onSideButton?(event.buttonNumber == 4) }
             return
         }
         super.sendEvent(event)
     }
+
+    /// ⌘-keys reach the web view here, not through sendEvent. An agent's ⌘-key the page left alone comes back here
+    /// from WebKit when agweb is in front; taken here, it never reaches the Edit menu, whose Copy and Paste would use
+    /// the person's clipboard (and ⌘W would close a tab).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if NativeInput.isSent(event) { return true }
+        if NSApp.isActive, let view = firstResponder as? NSView { notePerson(view) }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func notePerson(_ view: NSView) {
+        var view: NSView? = view
+        while let current = view, !(current is WKWebView) { view = current.superview }
+        if let webView = view as? WKWebView, !NativeInput.stroking.contains(ObjectIdentifier(webView)) { onPersonInput?(webView) }
+    }
 }
+

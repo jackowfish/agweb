@@ -880,4 +880,143 @@ public enum PageScripts {
       addEventListener('unhandledrejection', e => post('pageerror', [e.reason]));
     })();
     """
+
+    // Page world, document start, every frame. A page never writes the system clipboard itself: its writes go to the
+    // app, which puts them on the person's clipboard after the person's click and on the workspace's own after an
+    // agent's (ClipboardRouting.swift). Calls without a user gesture fail as WebKit's own do. Clipboard reads after an
+    // agent's input get the workspace's clipboard; the person's still go to WebKit, which refuses them (Model.swift).
+    // execCommand('copy'/'cut') becomes a synthetic copy event, whose data, or else the selection, is what was copied.
+    public static let clipboardHook = """
+    (() => {
+      const handler = window.webkit?.messageHandlers?.agwebClipboard;
+      if (!handler || window.__agwebShortcut) return;
+      const ask = (message) => handler.postMessage(message);
+      // Read now, before the page can replace navigator.userActivation.
+      const activation = navigator.userActivation;
+      const isActive = activation && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(activation), 'isActive')?.get;
+      const active = () => (isActive ? isActive.call(activation) : true);
+      const denied = () => new DOMException('The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.', 'NotAllowedError');
+      const exec = Document.prototype.execCommand;
+      const base64 = async (blob) => {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let s = '';
+        for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode(...bytes.subarray(i, i + 32768));
+        return btoa(s);
+      };
+      // Items travel as [type, value, base64] triples.
+      const send = async (items) => { if (await ask({ write: items }) !== 'ok') throw denied(); };
+      // Only secure contexts have navigator.clipboard; execCommand('copy') works everywhere.
+      const proto = window.Clipboard ? Clipboard.prototype : {};
+      const { read, readText } = proto;
+      proto.writeText = function (text) {
+        if (!arguments.length) return Promise.reject(new TypeError('Not enough arguments'));
+        if (!active()) return Promise.reject(denied());
+        return send([['text/plain', String(text), false]]);
+      };
+      proto.write = function (items) {
+        if (!Array.isArray(items)) return Promise.reject(new TypeError('Argument 1 must be a sequence of ClipboardItem'));
+        if (!active()) return Promise.reject(denied());
+        return (async () => {
+          const out = [];
+          const item = items[0];
+          for (const type of item ? item.types : []) {
+            const blob = await item.getType(type);
+            out.push(type.startsWith('text/') ? [type, await blob.text(), false] : [type, await base64(blob), true]);
+          }
+          return send(out);
+        })();
+      };
+      proto.readText = async function () {
+        if (!active()) throw denied();
+        const items = await ask({ read: true });
+        if (!items) return readText.call(this);
+        return items.find(i => i[0] === 'text/plain')?.[1] ?? '';
+      };
+      proto.read = async function () {
+        if (!active()) throw denied();
+        const items = await ask({ read: true });
+        if (!items) return read.call(this);
+        if (!items.length) return [];
+        const parts = {};
+        for (const [type, value, binary] of items) {
+          parts[type] = new Blob([binary ? Uint8Array.from(atob(value), c => c.charCodeAt(0)) : value], { type });
+        }
+        return [new ClipboardItem(parts)];
+      };
+      // The focused element, through open shadow roots (a design system's input).
+      const focused = () => {
+        let el = document.activeElement;
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+        return el;
+      };
+      const field = (el) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      // Where WebKit fires clipboard events: the focused field when the selection is in it (WebKit then reports the
+      // document selection collapsed), else the start of the selection.
+      const target = () => {
+        const el = focused();
+        const selection = getSelection();
+        if (field(el) && (!selection || selection.isCollapsed)) return el;
+        const node = selection && selection.rangeCount ? selection.getRangeAt(0).startContainer : null;
+        return (node && (node.nodeType === 1 ? node : node.parentElement)) || el || document.body || document.documentElement;
+      };
+      const copy = (cut) => {
+        const at = target();
+        const data = new DataTransfer();
+        const event = new ClipboardEvent(cut ? 'cut' : 'copy', { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+        at.dispatchEvent(event);
+        let items = [];
+        if (event.defaultPrevented) {
+          items = data.types.filter(t => t !== 'Files').map(t => [t, data.getData(t), false]);
+        } else if (!(at instanceof HTMLInputElement && at.type === 'password')) {
+          // WebKit's selection text covers a focused field's selection too, email and number fields included.
+          const selection = getSelection();
+          const text = selection ? String(selection) : '';
+          if (text) {
+            items = [['text/plain', text, false]];
+            if (!selection.isCollapsed && selection.rangeCount) {
+              const box = document.createElement('div');
+              box.append(selection.getRangeAt(0).cloneContents());
+              items.push(['text/html', box.innerHTML, false]);
+            }
+            const editable = field(at) ? !at.readOnly && !at.disabled : at.isContentEditable;
+            if (cut && editable) exec.call(document, 'delete');
+          }
+        }
+        if (items.length) ask({ write: items }).catch(() => {});
+        return true;
+      };
+      Document.prototype.execCommand = function (command, ...rest) {
+        const name = String(command).toLowerCase();
+        if (name !== 'copy' && name !== 'cut') return exec.call(this, command, ...rest);
+        // Another frame's document goes through that frame's own hook; a document without a window can't copy.
+        if (this !== document) return this.defaultView ? this.defaultView.document.execCommand(command, ...rest) : false;
+        return active() ? copy(name === 'cut') : false;
+      };
+      // An agent's ⌘A, ⌘C, ⌘X or ⌘V (agweb press): WebKit edits only on a person's key equivalent, so agweb does it
+      // after the key, unless the page's own keydown handler took it.
+      let lastKey = null;
+      addEventListener('keydown', (e) => { lastKey = e; }, true);
+      Object.defineProperty(window, '__agwebShortcut', { value: (key, items) => {
+        const pressed = lastKey;
+        lastKey = null;
+        if (!active()) return 'denied';
+        if (pressed && pressed.metaKey && pressed.key.toLowerCase() === key && pressed.defaultPrevented) return 'key';
+        if (key === 'a') { exec.call(document, 'selectAll'); return 'selected'; }
+        if (key === 'c' || key === 'x') { copy(key === 'x'); return 'copied'; }
+        const data = new DataTransfer();
+        for (const [type, value, binary] of items) if (!binary) data.setData(type, value);
+        const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+        target().dispatchEvent(event);
+        if (event.defaultPrevented) return 'page';
+        const text = items.find(i => i[0] === 'text/plain')?.[1];
+        return text != null && exec.call(document, 'insertText', false, text) ? 'pasted' : 'nowhere';
+      } });
+    })();
+    """
+
+    /// Runs the clipboard hook's shortcut in the focused frame; "none" when the frame has no hook (a page that
+    /// loaded before agweb knew to add it).
+    public static let shortcut = """
+    return window.__agwebShortcut ? window.__agwebShortcut(key, items) : 'none';
+    """
 }

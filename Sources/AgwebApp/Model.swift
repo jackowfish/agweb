@@ -68,6 +68,8 @@ final class Workspace: Identifiable {
     @ObservationIgnored var recorder: Recorder?
     /// `agweb -w NAME adblock off`: this workspace loads everything until it turns it back on; kept across restarts.
     @ObservationIgnored var adBlockOff = false
+    /// What the agent's pages copied, or `clipboard-set` gave; never the person's clipboard (ClipboardRouting.swift).
+    @ObservationIgnored var clipboard: Clip?
     @ObservationIgnored let dataStore: WKWebsiteDataStore
     @ObservationIgnored let contentController = WKUserContentController()
     @ObservationIgnored var routes: [Route] = [] { didSet { installScripts() } }
@@ -92,21 +94,24 @@ final class Workspace: Identifiable {
         return try await recorder.stop()
     }
 
-    @ObservationIgnored let console: WKScriptMessageHandler
+    @ObservationIgnored let console: ConsoleSink
 
-    init(name: String, profile: String?, console: WKScriptMessageHandler) {
+    init(name: String, profile: String?, console: ConsoleSink) {
         self.name = name
         self.profile = profile
         self.console = console
         dataStore = Profiles.store(profile)
         // One controller per workspace: popups get a copy of the opener's configuration, and registering
         // a message handler twice on a shared controller throws.
-        for handler in Self.handlers { contentController.add(console, name: handler) }
+        Self.addHandlers(console, to: contentController)
         AdBlock.shared.attach(contentController, to: self)
         installScripts()
     }
 
-    static let handlers = ["agwebConsole", "agwebPage"]
+    static func addHandlers(_ sink: ConsoleSink, to controller: WKUserContentController) {
+        for handler in ["agwebConsole", "agwebPage"] { controller.add(sink, name: handler) }
+        controller.addScriptMessageHandler(sink, contentWorld: .page, name: "agwebClipboard")
+    }
 
     /// User scripts apply to the next load; live pages get the new routes directly. A reopened tab with saved
     /// sessionStorage has a controller of its own, carrying the same scripts plus its own values.
@@ -114,7 +119,8 @@ final class Workspace: Identifiable {
         let routesJSON = String(decoding: (try? JSONEncoder().encode(routes)) ?? Data("[]".utf8), as: UTF8.self)
         let setRoutes = "window.__agwebRoutes = \(routesJSON);"
         var scripts = [WKUserScript(source: PageScripts.consoleHook, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-                       WKUserScript(source: setRoutes + PageScripts.networkHook, injectionTime: .atDocumentStart, forMainFrameOnly: false)]
+                       WKUserScript(source: setRoutes + PageScripts.networkHook, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+                       WKUserScript(source: PageScripts.clipboardHook, injectionTime: .atDocumentStart, forMainFrameOnly: false)]
         if !pendingStorage.isEmpty, let json = try? JSONEncoder().encode(pendingStorage) {
             scripts.append(WKUserScript(source: PageScripts.pendingStorage(String(decoding: json, as: UTF8.self)),
                                         injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -147,7 +153,7 @@ final class Workspace: Identifiable {
         config.websiteDataStore = dataStore
         if ownController {
             let own = WKUserContentController()
-            for handler in Self.handlers { own.add(console, name: handler) }
+            Self.addHandlers(console, to: own)
             AdBlock.shared.attach(own, to: self)
             config.userContentController = own
         } else {
@@ -632,6 +638,10 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     /// When the running command started, in ms since 1970, the clock the page's network hook stamps calls with.
     @ObservationIgnored var commandStart = 0.0
+    /// The last input an agent and the person gave this tab, which decides whose clipboard a page's copy reaches
+    /// (ClipboardRouting.swift). The agent's: each command on the tab and each native click or key it sends.
+    @ObservationIgnored var agentInputAt = Date.distantPast
+    @ObservationIgnored var personInputAt = Date.distantPast
 
     /// After an action that may navigate: give it a moment to start, then wait for it to settle, and for the fetch
     /// and XHR calls it started, so the next snapshot sees the page's answer. Older calls (long polls) don't count.
@@ -664,6 +674,9 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         commits += 1
+        // Input given to the last page is not this one's: it can't use the clipboard until it gets some.
+        agentInputAt = .distantPast
+        personInputAt = .distantPast
         frameRefs.removeAll()
         refLabels.removeAll()
         console.removeAll()
@@ -927,11 +940,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     /// The frame below the page that has the keyboard focus, if one does: keys typed go there.
     func focusedFrame() async -> Frame? {
-        let selector = NSSelectorFromString("_isFocused")
-        typealias IsFocused = @convention(c) (AnyObject, Selector) -> Bool
-        return await subframes().first { info in
-            info.responds(to: selector) && unsafeBitCast(info.method(for: selector), to: IsFocused.self)(info, selector)
-        }.map { Frame(info: $0, parent: nil, element: "") }
+        await subframes().first(where: Tab.isFocused).map { Frame(info: $0, parent: nil, element: "") }
     }
 
     func snapshot(_ config: WKSnapshotConfiguration? = nil, timeout: Double = 10) async throws -> NSImage {
