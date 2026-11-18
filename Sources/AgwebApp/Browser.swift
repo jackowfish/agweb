@@ -100,8 +100,12 @@ final class Browser {
         let tab = makeTab(in: workspace, configuration: configuration, opener: opener)
         if workspace.busy {
             drive(tab)
-        } else if NSApp.isActive, model.displayedTabID == opener.id {
-            model.display(tab.id)
+            return tab
+        }
+        // Opened by the page itself, not used: as fresh as the click on the opener that may have opened it.
+        tab.lastUsed = opener.lastUsed
+        if NSApp.isActive, model.displayedTabID == opener.id {
+            model.display(tab.id, used: false)
         }
         return tab
     }
@@ -110,6 +114,7 @@ final class Browser {
     /// as in any browser. Returns its index.
     func openInBackground(_ url: URL, from opener: Tab) -> Int {
         let tab = makeTab(in: opener.workspace, configuration: nil, opener: opener)
+        tab.markUsed()
         tab.loadInBackground(url)
         return opener.workspace.tabs.firstIndex { $0 === tab } ?? -1
     }
@@ -233,8 +238,12 @@ final class Browser {
     private func execute(_ request: Request) async -> Response {
         defer {
             if let workspace = model.workspaces.first(where: { $0.name == request.workspace }) {
-                // Its own command ran (global ones like `list` leave it unbusy): an hour-long `ask` ends as use.
-                if workspace.busy { workspace.lastUsed = Date() }
+                // Its own command ran (global ones like `list` leave it unbusy): an hour-long `ask` ends as use, for the
+                // tab it acted on too.
+                if workspace.busy {
+                    workspace.lastUsed = Date()
+                    workspace.actedOn?.lastUsed = workspace.lastUsed
+                }
                 workspace.busy = false
                 // Only after a command that acted on a page (`list` or `cookie-list` polling must not keep a tab awake),
                 // and the tab it left current: a popup or tab-select moves the agent on.

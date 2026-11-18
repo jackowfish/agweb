@@ -260,9 +260,10 @@ final class MainWindow: NSObject, NSWindowDelegate {
         model.display(tabs[index].id)
     }
 
-    @objc func goBack(_ sender: Any?) { model.displayedTab?.webView.goBack() }
-    @objc func goForward(_ sender: Any?) { model.displayedTab?.webView.goForward() }
-    @objc func reloadPage(_ sender: Any?) { model.displayedTab?.webView.reload() }
+    // The person's, from the toolbar, the menu or a side button: use, like a click in the page.
+    @objc func goBack(_ sender: Any?) { model.displayedTab?.markUsed(); model.displayedTab?.webView.goBack() }
+    @objc func goForward(_ sender: Any?) { model.displayedTab?.markUsed(); model.displayedTab?.webView.goForward() }
+    @objc func reloadPage(_ sender: Any?) { model.displayedTab?.markUsed(); model.displayedTab?.webView.reload() }
 
     // Safari's steps. Clicks and screenshots already scale by pageZoom; a zoomed page has a narrower CSS viewport,
     // so this is for the person, per tab, and not saved.
