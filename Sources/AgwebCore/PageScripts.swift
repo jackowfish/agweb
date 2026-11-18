@@ -1133,6 +1133,8 @@ public enum PageScripts {
           authenticatorAttachment: 'platform', response, getClientExtensionResults: () => ({ ...ext }),
           toJSON: () => ({ id: r.id, rawId: r.id, type: 'public-key', authenticatorAttachment: 'platform', clientExtensionResults: { ...ext }, response: json }) });
       };
+      // One request at a time, as in browsers: a double click must not create a second passkey that replaces the first.
+      let pending = false;
       const ceremony = (kind, options) => {
         const signal = options.signal;
         if (signal?.aborted) return Promise.reject(aborted(signal));
@@ -1141,11 +1143,16 @@ public enum PageScripts {
           if (kind === 'create') return Promise.reject(new DOMException('agweb creates passkeys only on request', 'NotAllowedError'));
           return new Promise((_, reject) => signal?.addEventListener('abort', () => reject(aborted(signal)), { once: true }));
         }
+        if (pending) return Promise.reject(new DOMException('A request is already pending.', 'NotAllowedError'));
+        pending = true;
         return new Promise((resolve, reject) => {
           let done = false;
           signal?.addEventListener('abort', () => { if (!done) { done = true; reject(aborted(signal)); } }, { once: true });
           const publicKey = plain(options.publicKey);
-          post({ kind, publicKey, credProps: !!options.publicKey.extensions?.credProps }).then((r) => {
+          const answered = post({ kind, publicKey, credProps: !!options.publicKey.extensions?.credProps });
+          const free = () => { pending = false; };
+          answered.then(free, free);
+          answered.then((r) => {
             if (done) return;
             done = true;
             if (r?.error) reject(new DOMException(r.error.message, r.error.name)); else resolve(credential(r.credential, kind === 'create'));

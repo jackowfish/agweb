@@ -47,7 +47,9 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
 
     /// Named profiles' passkeys: the login Keychain for the person's instance, a 0600 file in any other root
     /// (AGWEB_PASSKEY_STORE=keychain tries the Keychain there).
-    @ObservationIgnored let store: PasskeyStore = Agweb.isDefaultRoot || ProcessInfo.processInfo.environment["AGWEB_PASSKEY_STORE"] == "keychain"
+    @ObservationIgnored let store: PasskeyStore = Agweb.isDefaultRoot
+        // Only a test build (its own bundle id, so its own Keychain items): another root of the person's build would share theirs.
+        || (Agweb.isTestBuild(Agweb.bundleIdentifier) && ProcessInfo.processInfo.environment["AGWEB_PASSKEY_STORE"] == "keychain")
         ? KeychainPasskeyStore(service: Agweb.bundleIdentifier + ".passkey")
         : FilePasskeyStore(file: Agweb.root.appendingPathComponent("passkeys.json"))
 
@@ -166,6 +168,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
             guard let window = browser?.mainWindow.window, window.isVisible, window.attachedSheet == nil else {
                 throw Refusal("NotAllowedError", "another question is open in the window")
             }
+            tab.events.append("the person was asked to confirm a passkey request (their own click in the tab)")
             let alert = NSAlert()
             alert.messageText = prepared.title
             alert.informativeText = prepared.detail
@@ -289,7 +292,8 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
             button: "Create Passkey"
         ) { [self] byPerson in
             let old = try replaced()
-            let replacesPersons = old.contains { !((try? agentMade($0, store(owner))) ?? false) }
+            // The person may replace even when the Keychain wants their OK to read the old one; the add then asks.
+            let replacesPersons = try old.contains { try !agentMade($0, store(owner), telling: !byPerson) }
             // An agent deletes only what an agent made, and replacing is deleting.
             if replacesPersons && !byPerson {
                 throw Refusal("InvalidStateError", "this profile has the person's passkey for that account on \(rpID); only the person can replace it")
