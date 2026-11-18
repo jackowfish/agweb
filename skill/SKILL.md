@@ -88,7 +88,7 @@ agweb -w t --json eval "document.title" # {ok, result, page} for scripts
 agweb -w t find "Invoice" # just the lines holding the text, with refs and the lines above them
 ```
 
-`--raw` prints just the answer; Events and notes go to stderr. A snapshot stops at 2000 lines: snapshot a subtree or use `eval`. `js` is `eval`, for sandboxes that refuse the word.
+`--raw` prints just the answer; Events and notes go to stderr. A snapshot prints at most 2000 lines and `text` 50 KB: `--filename=page.md` saves all of either, to grep or read in parts. `text` shortens images inlined as base64 to `![alt](<data:image/png… 4 KB cut>)`: to see one, `screenshot` its ref. `js` is `eval`, for sandboxes that refuse the word.
 
 **Dropdowns and custom selects.**
 

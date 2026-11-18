@@ -19,6 +19,7 @@ Idle tabs are suspended: on my Mac five open pages sit at 0% CPU, where Chrome's
 - **Light.** Idle tabs are throttled and then suspended, so open pages cost almost nothing once nobody uses them.
 - **Acts like a person.** Clicks and keys are native macOS events, and the pointer moves like a hand, so hover menus and drag-and-drop work.
 - **Made for agents.** Snapshots give each element a ref that lasts while it is on the page. `snapshot --diff` and `find` show only what matters, and every action reports what it changed.
+- **Light on context.** `text` reads a page as markdown without the base64 of inline images (a Google results page drops from 758 KB to 23 KB) and stops at 50 KB with a note saying where; a snapshot stops at 2000 lines.
 - **Passwords stay out of the transcript.** `fill --secret-cmd 'pass show site'` types a secret the agent never sees in replies. 1Password and Bitwarden CLIs work too.
 - **No ads.** Ads and trackers are blocked with uBlock Origin's lists, which agweb downloads every 4 days. An agent testing analytics can turn it off for its own workspace (`agweb -w task adblock off`).
 - **Demo videos.** `video-start` records a tab to MP4, with the pointer and clicks drawn in.

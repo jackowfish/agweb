@@ -551,10 +551,12 @@ final class Browser {
             return describe(tab) + "\n" + Self.history(webView.backForwardList, length: length, limit: limit)
         case "snapshot":
             let target = args.first ?? ""
-            let snapshot = try await snapshotTree(tab, target)
+            // --filename (the CLI writes the file) takes every line; past the cap it isn't kept for diffs, which compare capped trees.
+            let whole = options["whole"] != nil && options["diff"] == nil
+            let snapshot = try await snapshotTree(tab, target, whole: whole)
             let last = tab.snapshots[target]
             if tab.snapshots.count > 8 { tab.snapshots = tab.snapshots.filter { $0.key.isEmpty } }
-            tab.snapshots[target] = snapshot
+            if !whole || snapshot.tree.split(separator: "\n").count <= PageScripts.maxSnapshotLines { tab.snapshots[target] = snapshot }
             let tree = snapshot.tree
             // Refs last as long as their element, so a line that didn't change is the same element.
             if options["diff"] != nil, let last, last.doc == snapshot.doc {
@@ -570,7 +572,7 @@ final class Browser {
             let tree = try await snapshotTree(tab, "").tree
             guard let found = Snapshot.find(query, in: tree, max: max) else {
                 let cut = tree.contains("(truncated at \(PageScripts.maxSnapshotLines) lines")
-                throw Failure("nothing on the page matches \(query.debugDescription)" + (cut ? " in its first \(PageScripts.maxSnapshotLines) snapshot lines; eval to search the rest" : ""))
+                throw Failure("nothing on the page matches \(query.debugDescription)" + (cut ? " in its first \(PageScripts.maxSnapshotLines) snapshot lines; snapshot --filename saves all of them to grep" : ""))
             }
             return describe(tab) + "\n### Found\n\(found.matches) line\(found.matches == 1 ? "" : "s") matching \(query.debugDescription)\n" + found.tree
         case "text":
@@ -583,7 +585,10 @@ final class Browser {
                     ? "\(target) shows no text yet; it may fill once loaded (wait --text)" : nil }
             let note = empty ?? (all ? nil : text.whole ? "no article here, so this is the whole page"
                 : text.shown > 300 && text.kept * 2 < text.shown ? "main content only: \(text.kept) of \(text.shown) words on the page; text --all for all of it" : nil)
-            return "### Result\n" + text.markdown + "\n" + describe(tab, note: note)
+            let images = text.dropped == 0 ? nil
+                : "\(text.dropped) inline image\(text.dropped == 1 ? "" : "s") shortened to alt text (data: URLs); snapshot lists them with refs to screenshot"
+            let notes = [note, images].compactMap { $0 }
+            return "### Result\n" + Output.demoteTitles(text.markdown) + "\n" + describe(tab, note: notes.isEmpty ? nil : notes.joined(separator: "; "))
         case "click", "dblclick":
             try await click(tab, target: try arg(0, "target"), button: try MouseButton(args.count > 1 ? args[1] : nil), js: options["js"] != nil,
                             forUpload: false, instant: instant, clicks: request.command == "dblclick" ? 2 : 1, refuseCovered: coverPatience(options))
@@ -1043,9 +1048,9 @@ final class Browser {
     }
 
     /// The page tree, and the document it came from; new elements number on from the workspace's last ref.
-    private func snapshotTree(_ tab: Tab, _ target: String) async throws -> (doc: String, tree: String) {
+    private func snapshotTree(_ tab: Tab, _ target: String, whole: Bool = false) async throws -> (doc: String, tree: String) {
         var handles: [[Int]: WKFrameInfo]?
-        let snapshot = try await snapshotTree(tab, target, in: tab.frameRefs[target], handles: &handles)
+        let snapshot = try await snapshotTree(tab, target, in: tab.frameRefs[target], handles: &handles, limit: whole ? 0 : PageScripts.maxSnapshotLines)
         if tab.refLabels.count > 20_000 { tab.refLabels.removeAll() }
         // Role and name only: a value may be what the agent typed. Anchored, so page text quoting "[ref=e3]" can't claim e3.
         for line in snapshot.tree.split(separator: "\n") {
@@ -1059,9 +1064,9 @@ final class Browser {
     /// One frame's tree with each cross-origin frame in it put in under its iframe, one after another so refs stay
     /// unique. `handles`: the frames below the page by path, looked up once, when the first one shows.
     /// `path`: where the frame should be; one that moved since (an iframe added above it) is left out, not misplaced.
-    private func snapshotTree(_ tab: Tab, _ target: String, in frame: Frame?, handles: inout [[Int]: WKFrameInfo]?, path: [Int]? = nil) async throws -> (doc: String, tree: String) {
+    private func snapshotTree(_ tab: Tab, _ target: String, in frame: Frame?, handles: inout [[Int]: WKFrameInfo]?, path: [Int]? = nil, limit: Int) async throws -> (doc: String, tree: String) {
         // A frame that never answers (mid-navigation) costs at most a few seconds; it then stays an empty iframe.
-        let reply = try await tab.call(PageScripts.snapshot, ["target": target], frame: frame, timeout: frame == nil ? 30 : 5)
+        let reply = try await tab.call(PageScripts.snapshot, ["target": target, "limit": limit], frame: frame, timeout: frame == nil ? 30 : 5)
         let parsed = try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any]
         // Before anything is thrown away: the refs it handed out are taken either way.
         if let next = parsed?["next"] as? Int { tab.workspace.refSeed = max(tab.workspace.refSeed, next) }
@@ -1090,7 +1095,7 @@ final class Browser {
             }
             // A frame that doesn't answer (still loading, or gone) stays an empty iframe, as before.
             guard let path = frames[index]["path"] as? [Int], let info = handles?[path], let element = frames[index]["ref"] as? String,
-                  let inner = try? await snapshotTree(tab, "", in: Frame(info: info, parent: frame, element: element), handles: &handles, path: path).tree,
+                  let inner = try? await snapshotTree(tab, "", in: Frame(info: info, parent: frame, element: element), handles: &handles, path: path, limit: limit).tree,
                   !inner.isEmpty else { continue }
             lines += inner.split(separator: "\n").map { String(indent + $0) }
         }

@@ -193,16 +193,42 @@ check "no article here" -w alpha text
 check "^agweb: Note: no article here" -w alpha --raw text
 # A listing whose main part keeps under half the page comes back whole; a page that says it is an article stays one.
 links=$(for i in $(seq 1 60); do printf '<li><a href="/s%d">Story number %d about something new today</a></li>' $i $i; done)
-para="<p>$(for i in $(seq 1 90); do printf 'word%d ' $i; done)</p>"
+# Inline data: images (Google's thumbnails) keep their alt and type, not their base64; one with no alt goes.
+pic="data:image/png;base64,$(printf 'iVBORw0K%.0s' $(seq 1 60))" # longer than the placeholders Defuddle drops itself
+para="<p>$(for i in $(seq 1 90); do printf 'word%d ' $i; done)<img width=\"300\" height=\"200\" alt=\"Tiny dot\" src=\"$pic\"><img alt=\"\" src=\"$pic\"><img alt=\"\" src=\"$pic\" srcset=\"/lazy-real.jpg 800w\"></p>"
 printf '<html><head><title>List</title>%s</head><body><nav><ul>%s</ul></nav><main><article><h1>Top</h1>%s</article></main></body></html>' '' "$links" "$para" > "$dir/listing.html"
 printf '<html><head><title>Story</title>%s</head><body><nav><ul>%s</ul></nav><main><article><h1>Top</h1>%s</article></main></body></html>' '<meta property="og:type" content="article">' "$links" "$para" > "$dir/story.html"
 check "Page" -w lst open "http://127.0.0.1:$port/listing.html"
 check "no article here, so this is the whole page" -w lst text
 check "agweb: Note: no article here" -w lst --raw text
 check "Story number 60" -w lst --raw text
+check '!\[Tiny dot\](<data:image/png… [0-9]* KB cut>)' -w lst --raw text
+check "2 inline images" -w lst text
+check 'lazy-real.jpg' -w lst --raw text
+lacks "base64" -w lst text --all
 check "Page" -w lst goto "http://127.0.0.1:$port/story.html"
 check "main content only: [0-9]* of [0-9]* words on the page; text --all for all of it" -w lst text
 lacks "Story number 60" -w lst --raw text
+check '!\[Tiny dot\](<data:image/png… [0-9]* KB cut>)' -w lst --raw text
+lacks "base64" -w lst text
+# A page past 50 KB prints its start and says where it was cut; --filename saves all of it.
+big="<p>$(for i in $(seq 1 9000); do printf 'para%d ' $i; done)</p><p>The very end</p>"
+printf '<html><head><title>Big</title></head><body>%s</body></html>' "$big" > "$dir/big.html"
+check "Page" -w lst goto "http://127.0.0.1:$port/big.html"
+check "(cut at [0-9]* KB of [0-9]* KB: text <ref> reads one part, --filename=page.md saves all of it)$" -w lst --raw text
+lacks "The very end" -w lst text
+check "^agweb: Note: text cut at [0-9]* KB of [0-9]* KB; --filename saves all of it" -w lst --raw text
+check "$dir/big.md" -w lst text --filename="$dir/big.md"
+grep -q 'The very end' "$dir/big.md" || fail "text --filename did not save the whole page"
+# A snapshot prints 2000 lines; --filename saves every one, and a plain snapshot after it is capped again.
+printf '<html><body><ul>%s</ul></body></html>' "$(for i in $(seq 1 2500); do printf '<li><a href="/l%d">Link %d</a></li>' $i $i; done)" > "$dir/many.html"
+check "Page" -w lst goto "http://127.0.0.1:$port/many.html"
+check "truncated at 2000 lines; snapshot --filename saves all of them" -w lst snapshot
+check "$dir/many.md" -w lst snapshot --filename="$dir/many.md"
+grep -q 'link "Link 2500"' "$dir/many.md" || fail "snapshot --filename did not save every line"
+! grep -q 'truncated at' "$dir/many.md" || fail "snapshot --filename was cut"
+check "truncated at 2000 lines" -w lst snapshot
+fails "in its first 2000 snapshot lines; snapshot --filename saves all of them to grep" -w lst find "Link 2400"
 check "closed" -w lst close
 grep -q 'Press me' "$dir/page.md" || fail "text --filename did not write the page"
 check "Page" -w alpha eval "() => { const d = document.createElement('div'); d.id = 'veiled'; d.hidden = true; d.textContent = 'Hidden waiting state'; document.body.append(d) }"
@@ -300,21 +326,22 @@ check "no earlier page in this tab" -w hist go-back
 check "index.html?next" -w hist click 'text=Next page'
 check "(current): \[.*\](.*index.html?next)" -w hist history
 check "- -1: \[.*\]($u)$" -w hist history
-check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved'), 100) }"
+# Later than eval's own reply takes (a move during a command counts as seen).
+check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved'), 500) }"
 # Not a command meanwhile: it would count as having seen the move.
-sleep 1
+sleep 1.5
 check "the tab moved since your last command, to .*?moved" -w hist go-back
 check "+1: .*?moved" -w hist history
 # --raw keeps only the answer, so the move goes to stderr.
-check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved2'), 100) }"
-sleep 1
+check "Page" -w hist eval "() => { setTimeout(() => location.assign('$u?moved2'), 500) }"
+sleep 1.5
 check "agweb: the tab moved since your last command, to .*?moved2" -w hist --raw eval "1"
 # A script replacing the page counts too; a URL change inside the page doesn't.
-check "Page" -w hist eval "() => { setTimeout(() => location.replace('$u?swapped'), 100) }"
-sleep 1
+check "Page" -w hist eval "() => { setTimeout(() => location.replace('$u?swapped'), 500) }"
+sleep 1.5
 check "the tab moved since your last command, to .*?swapped" -w hist eval "1"
-check "Page" -w hist eval "() => { setTimeout(() => history.replaceState(null, '', '?state'), 100) }"
-sleep 1
+check "Page" -w hist eval "() => { setTimeout(() => history.replaceState(null, '', '?state'), 500) }"
+sleep 1.5
 lacks "the tab moved" -w hist eval "1"
 # The agent's own navigations are no move.
 check "Page" -w hist open "$u?again"
@@ -887,7 +914,9 @@ check 'sso=1' -w delta eval 'document.cookie'
 check '^null$' -w beta --raw eval "sessionStorage.getItem('access_token')"
 if [ "$test_domain" != "$domain" ] && defaults read "$test_domain" agwebMainFrame >/dev/null 2>&1; then fail "the test build saved its frame outside its root's settings"; fi
 case "$(defaults read "$suite" agwebMainFrame)" in *"{900, "*) ;; *) false ;; esac || fail "the test window's saved frame was not restored"
-[ "$(defaults read $domain agwebMainFrame 2>/dev/null)" = "$person_frame" ] || fail "the selftest changed the person's saved window frame"
+# The person may move their own window meanwhile: only the test window's frame landing in their settings is a leak.
+person_now=$(defaults read $domain agwebMainFrame 2>/dev/null)
+[ "$person_now" = "$person_frame" ] || [ "$person_now" != "$(defaults read "$suite" agwebMainFrame)" ] || fail "the selftest saved its window frame over the person's"
 check "workspace delta closed" close-all
 check "profile selftest-shared deleted" profile-delete selftest-shared
 check "Title" -w zeta open "$u" -p selftest-shared

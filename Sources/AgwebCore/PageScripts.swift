@@ -183,7 +183,7 @@ public enum PageScripts {
 
     public static let maxSnapshotLines = 2000
 
-    /// The whole page, or with `target` only that element and what is inside it.
+    /// The whole page, or with `target` only that element and what is inside it; `limit` lines at most, 0 for all of them.
     public static let snapshot = find + """
     const root = target ? find(target) : null;
     for (const [ref, weak] of W.refs) if (!weak.deref()) W.refs.delete(ref);
@@ -194,7 +194,7 @@ public enum PageScripts {
     const leaf = new Set(['link', 'button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'slider', 'heading', 'img', 'switch', 'tab', 'menuitem', 'option',
       'cell', 'gridcell', 'columnheader', 'rowheader', 'generic']);
     const emit = (line) => {
-      if (lines.length >= \(maxSnapshotLines)) { truncated = true; return false; }
+      if (limit && lines.length >= limit) { truncated = true; return false; }
       lines.push(line);
       return true;
     };
@@ -297,7 +297,7 @@ public enum PageScripts {
       for (const child of childrenOf(node)) yield* roled(child);
     };
     if (root) visit(root, 0); else walk(document.body || document.documentElement, 0);
-    if (truncated) lines.push(`- (truncated at \(maxSnapshotLines) lines; use eval to read the rest)`);
+    if (truncated) lines.push(`- (truncated at ${limit} lines; snapshot --filename saves all of them)`);
     if (root && !lines.length && (skip.has(root.tagName) || !root.checkVisibility({ visibilityProperty: true }))) lines.push('- (hidden on the page, so no tree; eval reads it)');
     return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames, refs: shown, path: framePath(window) });
     """
@@ -363,12 +363,28 @@ public enum PageScripts {
     /// Markdown through Defuddle (loaded into this world first): one element converted whole, or the page's main
     /// content. A page with little article in it (a web app) is converted whole instead.
     public static let text = find + """
+    // An image inlined as a data: URL (Google's result thumbnails) is kilobytes of base64 no reader can use: it keeps
+    // its alt text, type and size with the data cut, or goes when it has no alt; snapshot still lists it with a ref.
+    let dropped = 0;
+    const noData = (root) => {
+      for (const source of root.querySelectorAll('source[srcset^="data:" i]')) source.remove();
+      for (const img of root.querySelectorAll('img')) {
+        if (/^\\s*data:/i.test(img.getAttribute('srcset') || '')) img.removeAttribute('srcset');
+        // A lazy image's data: src is a placeholder: the converter takes the real one from srcset or <source>.
+        if (!/^\\s*data:/i.test(img.getAttribute('src') || '') || img.getAttribute('srcset') || img.closest('picture')?.querySelector('source[srcset]')) continue;
+        dropped++;
+        if (!(img.getAttribute('alt') || '').trim()) { img.remove(); continue; }
+        const src = img.getAttribute('src').trim();
+        img.setAttribute('src', `${src.split(/[;,]/)[0]}… ${Math.max(1, Math.round(src.length * 0.75 / 1000))} KB cut`);
+      }
+    };
     // Inline SVG icons come through as markup, which no reader wants; they go from a copy before converting, so a
     // code sample showing <svg> (text, not an element) stays.
     const bare = (html) => {
       const box = document.createElement('template');
       box.innerHTML = html;
       for (const svg of box.content.querySelectorAll('svg')) svg.remove();
+      noData(box.content);
       return box;
     };
     // A copy of what the page shows: elements it hides (display: none) stay out, such as a challenge page's
@@ -387,16 +403,17 @@ public enum PageScripts {
       };
       const root = copy(el);
       box.content.append(...(inner ? [...root.childNodes] : [root]));
+      noData(box.content);
       return box;
     };
     const md = (box) => Defuddle.createMarkdownContent(box.innerHTML, location.href);
     const words = (s) => (s.match(/\\S+/g) || []).length;
-    const reply = (markdown, whole = false, kept = 0, shown = 0) => JSON.stringify({ markdown, whole, kept, shown });
+    const reply = (markdown, whole = false, kept = 0, shown = 0) => JSON.stringify({ markdown, whole, kept, shown, dropped });
     if (target) {
       const el = find(target);
-      return JSON.stringify({ markdown: md(shownCopy(el, false)), hidden: !el.checkVisibility() });
+      return JSON.stringify({ markdown: md(shownCopy(el, false)), hidden: !el.checkVisibility(), dropped });
     }
-    const body = () => md(shownCopy(document.body, true));
+    const body = () => { dropped = 0; return md(shownCopy(document.body, true)); };
     if (everything) return reply(body(), true);
     const page = new Defuddle(document, { url: location.href }).parse();
     if (page.wordCount < 50) return reply(body(), true);

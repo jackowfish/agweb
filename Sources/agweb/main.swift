@@ -306,6 +306,9 @@ case "state-load":
     guard let data = FileManager.default.contents(atPath: file) else { fail("cannot read \(file)") }
     args = [String(decoding: data, as: UTF8.self)]
     writeAnswerTo = nil
+case "snapshot" where writeAnswerTo != nil:
+    // A file takes every line; the 2000-line cap is for what an agent reads.
+    options["whole"] = ""
 case "open", "goto", "tab-new":
     // A local file wins over a same-named host, the way a shell user would expect.
     if let target = args.first, FileManager.default.fileExists(atPath: absolute(target)) { args[0] = absolute(target) }
@@ -378,7 +381,9 @@ let timeout = max(command == "download" ? 200 : 120, waitSeconds) + (command == 
 guard let response = sendRequest(Request(workspace: workspace, command: command, args: args, options: options), path: socket, timeout: timeout) else {
     fail("no response from agweb on \(socket)")
 }
-guard response.ok, let path = writeAnswerTo else { finish(response.output, ok: response.ok) }
+guard response.ok, let path = writeAnswerTo else {
+    finish(response.ok && command == "text" ? Output.capText(response.output) : response.output, ok: response.ok)
+}
 
 // Replace the answer with the file it went to; the page sections stay.
 let sections = Output.sections(response.output)

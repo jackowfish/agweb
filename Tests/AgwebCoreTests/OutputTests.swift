@@ -49,3 +49,26 @@ let evalReply = "### Result\n\"a\\nb\"\n### Page\n- URL: https://example.com/\n-
     #expect(Output.rawNotes(reply) == ["Note: main content only", "Console: 2 new errors", "the tab moved since your last command"])
     #expect(Output.rawNotes("### Result\n1\n### Page\n- URL: x").isEmpty)
 }
+
+@Test func textIsCutAtALineAndSaysSo() {
+    let page = "\n### Page\n- URL: x"
+    #expect(Output.capText("### Result\nshort" + page, limit: 100) == "### Result\nshort" + page)
+    let lines = (1...30).map { "line \($0) of the page" }.joined(separator: "\n")
+    let cut = Output.capText("### Result\n" + lines + page, limit: 200)
+    let answer = Output.raw(cut)
+    #expect(answer.hasPrefix("line 1 of the page\n"))
+    #expect(answer.hasSuffix("… (cut at 1 KB of 1 KB: text <ref> reads one part, --filename=page.md saves all of it)"))
+    #expect(answer.contains("line 9 of the page\n") && !answer.contains("line 11 "))
+    #expect(cut.hasSuffix(page + "\n- Note: text cut at 1 KB of 1 KB; --filename saves all of it"))
+    #expect(Output.rawNotes(Output.capText("### Result\n" + lines + "\n### Page\n- URL: x\n- Note: no article here", limit: 200))
+        == ["Note: no article here; text cut at 1 KB of 1 KB; --filename saves all of it"])
+    // One long line is cut inside it, never inside a character.
+    let wide = Output.raw(Output.capText("### Result\n" + String(repeating: "é", count: 200) + page, limit: 101))
+    #expect(wide.hasPrefix(String(repeating: "é", count: 50) + "\n\n…"))
+}
+
+@Test func aPagesHeadingNamedLikeASectionStaysInTheAnswer() {
+    let markdown = Output.demoteTitles("# API\n\n### Request body\n\nJSON\n\n### History\n\nv1\n\n### Overview")
+    #expect(markdown == "# API\n\n#### Request body\n\nJSON\n\n#### History\n\nv1\n\n### Overview")
+    #expect(Output.raw("### Result\n" + markdown + "\n### Page\n- URL: x") == markdown)
+}
