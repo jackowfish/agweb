@@ -54,8 +54,17 @@ func rpIDs(rpID: String, host: String, allowed: Bool) {
     #expect(CBOR.int(500) == [0x19, 0x01, 0xf4])
     // Keys sorted by encoded length, then bytes: fmt, attStmt, authData.
     let object = WebAuthn.attestationObject(authenticatorData: [1, 2])
-    #expect(object == [0xa3, 0x63] + Array("fmt".utf8) + [0x64] + Array("none".utf8) + [0x67] + Array("attStmt".utf8) + [0xa0]
-        + [0x68] + Array("authData".utf8) + [0x42, 1, 2])
+    // Built in steps: one long `+` chain timed out in the type checker on CI's macOS 15 runner.
+    var expected: [UInt8] = [0xa3, 0x63]
+    expected += Array("fmt".utf8)
+    expected += [0x64]
+    expected += Array("none".utf8)
+    expected += [0x67]
+    expected += Array("attStmt".utf8)
+    expected += [0xa0, 0x68]
+    expected += Array("authData".utf8)
+    expected += [0x42, 1, 2]
+    #expect(object == expected)
 }
 
 @Test func assertionVerifies() throws {
