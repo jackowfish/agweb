@@ -22,11 +22,12 @@ final class Browser {
     init() {
         console.browser = self
         NativeInput.onInput = { [weak self] webView in self?.tab(for: webView)?.agentInputAt = Date() }
-        model.onDisplay = { [weak self] id in
+        model.onDisplay = { [weak self] id, used in
             guard let self, let tab = self.model.displayedTab, tab.id == id else { return }
             self.mainWindow.bringToTop(tab.webView)
             self.updateVisibility()
             Task { try? await tab.loadIfPending() }
+            if used { tab.markUsed() }
             self.scheduleSave()
         }
         model.onDashboard = { [weak self] open in self?.dashboardChanged(open) }
@@ -118,6 +119,7 @@ final class Browser {
     private func drive(_ tab: Tab) {
         let watching = model.displayedTab.map { $0.workspace === tab.workspace } ?? true
         tab.workspace.currentID = tab.id
+        tab.markUsed()
         if watching { model.display(tab.id) }
         updateVisibility()
     }
@@ -140,7 +142,7 @@ final class Browser {
         }
         if model.displayedTabID == tab.id {
             if let next = workspace.current ?? model.workspaces.lazy.flatMap(\.tabs).first {
-                model.display(next.id)
+                model.display(next.id, used: false)
             } else {
                 model.displayedTabID = nil
             }
@@ -231,6 +233,8 @@ final class Browser {
     private func execute(_ request: Request) async -> Response {
         defer {
             if let workspace = model.workspaces.first(where: { $0.name == request.workspace }) {
+                // Its own command ran (global ones like `list` leave it unbusy): an hour-long `ask` ends as use.
+                if workspace.busy { workspace.lastUsed = Date() }
                 workspace.busy = false
                 // Only after a command that acted on a page (`list` or `cookie-list` polling must not keep a tab awake),
                 // and the tab it left current: a popup or tab-select moves the agent on.
@@ -296,11 +300,13 @@ final class Browser {
             return "dashboard shown\n### Screenshot\n\(path)"
         case "list":
             if options["json"] != nil {
+                let stamp = ISO8601DateFormatter()
                 let list = model.workspaces.map { workspace -> [String: Any] in
                     ["name": workspace.name, "profile": workspace.profile ?? NSNull(), "busy": workspace.busy,
+                     "lastUsed": stamp.string(from: workspace.lastUsed),
                      "tabs": workspace.tabs.enumerated().map { index, tab in
                          ["index": index, "url": tab.currentURL, "title": tab.currentTitle, "current": tab.id == workspace.currentID,
-                          "state": tab.state, "asking": tab.asking ?? NSNull()]
+                          "state": tab.state, "asking": tab.asking ?? NSNull(), "lastUsed": stamp.string(from: tab.lastUsed)]
                      }]
                 }
                 return String(decoding: try JSONSerialization.data(withJSONObject: ["workspaces": list, "dashboard": model.dashboardOpen],
@@ -313,10 +319,12 @@ final class Browser {
                 + [("fresh profile (each workspace its own, in memory)", model.workspaces.filter { $0.profile == nil })]
             return groups.filter { !$0.1.isEmpty }.map { title, workspaces in
                 title + "\n" + workspaces.map { workspace in
-                    "  - \(workspace.name) (\(workspace.tabs.count) tab\(workspace.tabs.count == 1 ? "" : "s"))" + workspace.tabs.enumerated().map { index, tab in
-                        let current = tab.id == workspace.currentID ? " (current)" : ""
-                        return "\n    - \(index):\(current) [\(tab.currentTitle)](\(tab.currentURL))" + (tab.state == "visible" ? "" : " (\(tab.state))")
-                    }.joined()
+                    "  - \(workspace.name) (\(workspace.tabs.count) tab\(workspace.tabs.count == 1 ? "" : "s"), used \(Clip.ago(Date().timeIntervalSince(workspace.lastUsed))))"
+                        + workspace.tabs.enumerated().map { index, tab in
+                            let current = tab.id == workspace.currentID ? " (current)" : ""
+                            let notes = (tab.state == "visible" ? [] : [tab.state]) + ["used \(Clip.ago(Date().timeIntervalSince(tab.lastUsed)))"]
+                            return "\n    - \(index):\(current) [\(tab.currentTitle)](\(tab.currentURL)) (\(notes.joined(separator: ", ")))"
+                        }.joined()
                 }.joined(separator: "\n")
             }.joined(separator: "\n")
         case "close-all":
@@ -380,6 +388,7 @@ final class Browser {
             workspace.rawReply = options["raw"] != nil
             workspace.lastCommand = Self.summary(request)
             workspace.lastCommandAt = Date()
+            workspace.lastUsed = Date()
             workspace.busy = true
             mainWindow.showQuietly()
             let tab = workspace.current ?? addTab(to: workspace)
@@ -403,6 +412,7 @@ final class Browser {
         workspace.rawReply = options["raw"] != nil
         workspace.lastCommand = Self.summary(request)
         workspace.lastCommandAt = Date()
+        workspace.lastUsed = Date()
         workspace.busy = true
 
         switch request.command {

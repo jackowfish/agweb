@@ -14,16 +14,17 @@ final class BrowserModel {
     /// agweb's processes and their usage, sampled while the dashboard is open with Settings ▸ CPU and memory on.
     var processes: [pid_t: (name: String, usage: Usage)] = [:]
     @ObservationIgnored var onDashboard: ((Bool) -> Void)?
-    @ObservationIgnored var onDisplay: ((Int) -> Void)?
+    /// The tab's id, and whether showing it counts as use (Tab.lastUsed): not a fallback after a close, nor the launch.
+    @ObservationIgnored var onDisplay: ((Int, Bool) -> Void)?
     @ObservationIgnored var onCloseTab: ((Tab) -> Void)?
     @ObservationIgnored var onCloseWorkspace: ((Workspace) -> Void)?
     @ObservationIgnored var onNewTab: ((Workspace?) -> Void)?
     /// File ▸ New Workspace: a name and a named profile (nil: fresh); returns why it failed.
     @ObservationIgnored var onNewWorkspace: ((String, String?) -> String?)?
 
-    func display(_ id: Int) {
+    func display(_ id: Int, used: Bool = true) {
         displayedTabID = id
-        onDisplay?(id)
+        onDisplay?(id, used)
     }
 
     var displayedTab: Tab? {
@@ -51,6 +52,8 @@ final class Workspace: Identifiable {
     /// What the agent last ran here and when, for the dashboard.
     var lastCommand: String?
     var lastCommandAt: Date?
+    /// The newest use of the workspace or any tab in it (Tab.markUsed); saved, for `list`.
+    @ObservationIgnored var lastUsed = Date()
     @ObservationIgnored var acceptDialogs = false
     /// Where downloads nobody named go: the last command's `--download-dir`, by default its caller's `.agweb/`.
     @ObservationIgnored var downloadDir: URL?
@@ -595,6 +598,22 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     /// The tab stays visible until then after its agent's last command; see Visibility.swift.
     @ObservationIgnored var awakeUntil = Date.distantPast
+
+    /// When an agent's command, or the person's display, click or key, last used the tab; saved, for `list`. A page's
+    /// own timers and reloads don't count.
+    @ObservationIgnored var lastUsed = Date()
+    @ObservationIgnored private var useSavedAt = Date.distantPast
+
+    func markUsed() {
+        let now = Date()
+        lastUsed = now
+        workspace.lastUsed = now
+        // A command saves anyway; the person's clicks and keys add a save at most every 10 minutes.
+        if now.timeIntervalSince(useSavedAt) > 600 {
+            useSavedAt = now
+            browser?.scheduleSave()
+        }
+    }
 
     /// What the tab costs: "visible", "hidden" (throttled), "suspended" (process frozen by WebKit) or "not loaded".
     /// The page's web content process; 0 before it has one. Popups opened by script can share their opener's.

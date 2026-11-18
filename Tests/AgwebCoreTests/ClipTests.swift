@@ -42,3 +42,9 @@ func clipRefusesAnythingElseAPagePosts(body: Any?) {
     #expect(Clip(items: [], source: "p").isSupported)
     #expect(Clip(triples: [["text/plain", String(repeating: "x", count: Clip.maxBytes + 1), false]], source: "p", origin: nil) == nil)
 }
+
+@Test func agoCountsDaysPastADay() {
+    #expect(Clip.ago(30) == "30 s ago")
+    #expect(Clip.ago(7200) == "2 h ago")
+    #expect(Clip.ago(3 * 86400 + 5) == "3 d ago")
+}

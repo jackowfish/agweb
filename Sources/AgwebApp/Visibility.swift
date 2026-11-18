@@ -26,6 +26,7 @@ extension Browser {
     /// page shown again refetches on visibilitychange (SWR, React Query), so the command waits for that first.
     func wake(_ tab: Tab) async {
         tab.workspace.actedOn = tab
+        tab.markUsed()
         guard mainWindow.isHidden(tab.webView) else { return }
         setHidden(tab, false)
         guard tab.pendingURL == nil else { return }

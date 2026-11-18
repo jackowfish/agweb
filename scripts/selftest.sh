@@ -839,6 +839,8 @@ echo "== close and quit finish a recording; workspaces and tabs, a named profile
 check "recording" -w eph2 video-start "$dir/close.mp4"
 check "### Video" -w eph2 close
 LC_ALL=C grep -qa moov "$dir/close.mp4" || fail "close left the video without its index"
+check "^  - eph1 (1 tab, used [0-9]" list
+check '"lastUsed":"20' list --json
 check "Page" -w beta eval "() => { document.cookie = 'kept=1; max-age=600'; document.cookie = 'sso=1' }"
 # sessionStorage: a named profile's tab keeps it per origin, saved after commands and at quit; a fresh profile keeps none.
 check "localhost" -w beta goto "http://localhost:$port/index.html?b2"

@@ -84,8 +84,8 @@ public struct Clip: Equatable, Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func ago(_ seconds: TimeInterval) -> String {
+    public static func ago(_ seconds: TimeInterval) -> String {
         let s = Int(max(0, seconds))
-        return s < 60 ? "\(s) s ago" : s < 3600 ? "\(s / 60) min ago" : "\(s / 3600) h ago"
+        return s < 60 ? "\(s) s ago" : s < 3600 ? "\(s / 60) min ago" : s < 86400 ? "\(s / 3600) h ago" : "\(s / 86400) d ago"
     }
 }

@@ -12,6 +12,8 @@ struct SavedWorkspaces: Codable {
         var tabs: [Tab]
         /// `agweb -w NAME adblock off`; nil when it blocks.
         var adBlockOff: Bool?
+        /// Workspace.lastUsed; nil in files from before it was kept, read as the launch time.
+        var lastUsed: Date?
     }
 
     struct Tab: Codable {
@@ -19,6 +21,7 @@ struct SavedWorkspaces: Codable {
         var title: String
         /// sessionStorage by origin; 0600 like the rest, since it holds tokens.
         var session: [String: [String: String]]?
+        var lastUsed: Date?
     }
 
     var workspaces: [Workspace]
@@ -50,12 +53,15 @@ extension Browser {
             workspaces: model.workspaces.map { workspace in
                 .init(name: workspace.name, profile: workspace.profile, current: workspace.tabs.firstIndex { $0.id == workspace.currentID },
                       tabs: workspace.tabs.map { .init(url: $0.currentURL, title: $0.currentTitle,
-                                                       session: workspace.profile == nil || $0.session.isEmpty ? nil : $0.session) },
-                      adBlockOff: workspace.adBlockOff ? true : nil)
+                                                       session: workspace.profile == nil || $0.session.isEmpty ? nil : $0.session,
+                                                       lastUsed: $0.lastUsed) },
+                      adBlockOff: workspace.adBlockOff ? true : nil, lastUsed: workspace.lastUsed)
             },
             displayed: displayed?.workspace.name, displayedIndex: displayed.flatMap { tab in tab.workspace.tabs.firstIndex { $0 === tab } },
             dashboard: model.dashboardOpen ? true : nil)
-        guard let data = try? JSONEncoder().encode(state) else { return }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(state) else { return }
         let file = Agweb.workspacesFile
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         // URLs can carry tokens.
@@ -64,7 +70,8 @@ extension Browser {
 
     func restoreWorkspaces() {
         guard let data = try? Data(contentsOf: Agweb.workspacesFile),
-              let state = try? JSONDecoder().decode(SavedWorkspaces.self, from: data) else { return }
+              case let decoder = { let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; return decoder }(),
+              let state = try? decoder.decode(SavedWorkspaces.self, from: data) else { return }
         for saved in state.workspaces where !model.workspaces.contains(where: { $0.name == saved.name }) {
             guard let workspace = try? existingOrNewWorkspace(named: saved.name, profile: saved.profile) else { continue }
             workspace.adBlockOff = saved.adBlockOff == true
@@ -75,12 +82,14 @@ extension Browser {
                 tab.pendingURL = url
                 tab.url = savedTab.url
                 tab.title = savedTab.title
+                tab.lastUsed = savedTab.lastUsed ?? tab.lastUsed
             }
+            workspace.lastUsed = saved.lastUsed ?? workspace.lastUsed
             if let index = saved.current, workspace.tabs.indices.contains(index) { workspace.currentID = workspace.tabs[index].id }
         }
         if let name = state.displayed, let index = state.displayedIndex,
            let tabs = model.workspaces.first(where: { $0.name == name })?.tabs, tabs.indices.contains(index) {
-            model.display(tabs[index].id)
+            model.display(tabs[index].id, used: false)
         }
         if state.dashboard == true { model.dashboardOpen = true }
         AdBlock.shared.apply()

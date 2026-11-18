@@ -56,7 +56,9 @@ final class MainWindow: NSObject, NSWindowDelegate {
         super.init()
         (window as? AgentWindow)?.onSideButton = { [weak self] forward in forward ? self?.goForward(nil) : self?.goBack(nil) }
         (window as? AgentWindow)?.onPersonInput = { [weak model] webView in
-            model?.workspaces.lazy.flatMap(\.tabs).first { $0.webView === webView }?.personInputAt = Date()
+            guard let tab = model?.workspaces.lazy.flatMap(\.tabs).first(where: { $0.webView === webView }) else { return }
+            tab.personInputAt = Date()
+            tab.markUsed()
         }
         window.delegate = self
         installToolbar()
