@@ -66,4 +66,5 @@ Agent actions never activate the app, raise or focus its window, or pop anything
 - HTML5 draggables get DOM drag events: a native drag would follow the person's real mouse.
 - `document.hasFocus()` is false, since the window is never key while agents work. The window reports key to WebKit only while the app is in the background (WebKit drops mouse moves otherwise), so pages also react to the person's pointer over it.
 - A closed or minimized window pauses pages; screenshots refuse and recordings get no frames until `agweb show`.
+- macOS 15 runs agweb, but a page's copy from inside a frame is refused and the secure input WebKit leaves on in the background isn't released (probably WebKit SPI missing there); CI's selftest skips those checks there.
 - Agweb answers passkey requests with its own passkeys only; the person's Apple Passwords passkeys need Apple's browser entitlement (applied for).
