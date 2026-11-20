@@ -1,151 +1,151 @@
 {
- "commit": "bfdf31e-dirty",
+ "commit": "1ad873f",
  "date": "2026-11-20",
- "machine": "arm64, macOS 27.2",
+ "machine": "Mac14,6 arm64, macOS 27.2",
  "cases": {
   "goto (54k)": {
-   "s": 0.564,
-   "cpu": 0.318,
-   "mb": 507,
-   "error": null
+   "s": 0.556,
+   "cpu": 0.296,
+   "mb": 508,
+   "added": 50
   },
   "snapshot (54k)": {
-   "s": 0.034,
-   "cpu": 0.037,
+   "s": 0.032,
+   "cpu": 0.047,
    "mb": 521,
-   "error": null
+   "added": 0
   },
   "click CSS (54k)": {
-   "s": 0.198,
-   "cpu": 0.057,
-   "mb": 525,
-   "error": null
+   "s": 0.201,
+   "cpu": 0.058,
+   "mb": 526,
+   "added": 0
   },
   "fill (54k)": {
-   "s": 0.045,
-   "cpu": 0.057,
-   "mb": 534,
-   "error": null
+   "s": 0.047,
+   "cpu": 0.059,
+   "mb": 536,
+   "added": 0
   },
   "press (54k)": {
-   "s": 0.248,
-   "cpu": 0.068,
-   "mb": 556,
-   "error": null
+   "s": 0.246,
+   "cpu": 0.058,
+   "mb": 554,
+   "added": 0
   },
   "click role= with a name (54k)": {
-   "s": 0.266,
-   "cpu": 0.209,
-   "mb": 629,
-   "error": null
+   "s": 0.265,
+   "cpu": 0.196,
+   "mb": 626,
+   "added": 0
   },
   "hover role= with a name (54k)": {
-   "s": 0.103,
-   "cpu": 0.168,
-   "mb": 642,
-   "error": null
+   "s": 0.101,
+   "cpu": 0.157,
+   "mb": 638,
+   "added": 0
   },
   "wait --text (54k)": {
-   "s": 0.042,
-   "cpu": 0.059,
-   "mb": 642,
-   "error": null
+   "s": 0.044,
+   "cpu": 0.057,
+   "mb": 638,
+   "added": 0
   },
   "text (54k)": {
-   "s": 0.672,
-   "cpu": 0.828,
-   "mb": 1287,
-   "error": null
+   "s": 0.669,
+   "cpu": 0.8,
+   "mb": 1291,
+   "added": 38
   },
   "text --all (54k)": {
-   "s": 0.31,
-   "cpu": 0.459,
-   "mb": 1455,
-   "error": null
+   "s": 0.309,
+   "cpu": 0.428,
+   "mb": 1453,
+   "added": 0
   },
   "eval returning 2 MB (54k)": {
-   "s": 0.095,
-   "cpu": 0.075,
-   "mb": 1476,
-   "error": null
+   "s": 0.094,
+   "cpu": 0.074,
+   "mb": 1464,
+   "added": 0
   },
   "screenshot (54k)": {
-   "s": 0.061,
-   "cpu": 0.077,
-   "mb": 1481,
-   "error": null
+   "s": 0.059,
+   "cpu": 0.087,
+   "mb": 1470,
+   "added": 0
   },
   "screenshot --full-page (54k)": {
-   "s": 0.994,
-   "cpu": 1.277,
+   "s": 0.984,
+   "cpu": 1.247,
    "mb": 1804,
-   "error": null
+   "added": 248
   },
   "snapshot (rapidoc)": {
-   "s": 0.035,
+   "s": 0.036,
    "cpu": 0.038,
-   "mb": 1036,
-   "error": null
+   "mb": 825,
+   "added": 0
   },
   "snapshot --filename (rapidoc, 165k lines)": {
-   "s": 0.858,
-   "cpu": 1.146,
-   "mb": 1802,
-   "error": null
+   "s": 0.859,
+   "cpu": 1.144,
+   "mb": 1596,
+   "added": 499
   },
   "find TRY (rapidoc)": {
-   "s": 0.944,
-   "cpu": 1.237,
-   "mb": 1826,
-   "error": null
+   "s": 0.908,
+   "cpu": 1.197,
+   "mb": 1626,
+   "added": 32
   },
   "find resource_4999/ (rapidoc)": {
-   "s": 0.986,
-   "cpu": 1.197,
-   "mb": 1827,
-   "error": null
+   "s": 0.958,
+   "cpu": 1.167,
+   "mb": 1623,
+   "added": 2
   },
   "wait CSS in a shadow root (rapidoc)": {
-   "s": 0.094,
-   "cpu": 0.207,
-   "mb": 1828,
-   "error": null
+   "s": 0.091,
+   "cpu": 0.187,
+   "mb": 1623,
+   "added": 0
   },
   "snapshot #op77 in a shadow root (rapidoc)": {
-   "s": 0.082,
+   "s": 0.074,
    "cpu": 0.117,
-   "mb": 1828,
-   "error": null
+   "mb": 1623,
+   "added": 0
   },
   "text (article)": {
-   "s": 0.142,
-   "cpu": 0.161,
-   "mb": 765,
-   "error": null
+   "s": 0.137,
+   "cpu": 0.15,
+   "mb": 552,
+   "added": 0
   },
   "pdf (article)": {
-   "s": 0.852,
-   "cpu": 0.797,
-   "mb": 781,
-   "error": null
+   "s": 0.865,
+   "cpu": 0.787,
+   "mb": 569,
+   "added": 9
   },
   "text --all (table)": {
-   "s": 0.598,
-   "cpu": 0.769,
-   "mb": 1676,
-   "error": null
+   "s": 0.588,
+   "cpu": 0.751,
+   "mb": 1470,
+   "added": 901
   },
   "snapshot --filename (table)": {
-   "s": 0.191,
-   "cpu": 0.299,
-   "mb": 1753,
-   "error": null
+   "s": 0.163,
+   "cpu": 0.241,
+   "mb": 1554,
+   "added": 0
   },
   "playwright-cli snapshot (rapidoc, 165k lines)": {
-   "s": 2.784,
-   "cpu": 3.962,
-   "mb": 3247,
-   "error": null
+   "s": 2.826,
+   "cpu": 3.78,
+   "mb": 3263,
+   "added": 426
   }
  }
 }
