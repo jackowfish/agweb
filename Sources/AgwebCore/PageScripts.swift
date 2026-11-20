@@ -432,10 +432,8 @@ public enum PageScripts {
       const copy = (node) => {
         const out = inert.importNode(node, false);
         for (const child of rendered(node)) {
-          // A shadow tree's styles come along with it; a script stays only as math (MathJax's math/tex, display:none
-          // like every script).
-          const math = child.nodeType === 1 && child.localName === 'script' && /math/i.test(child.type);
-          if (child.nodeType === 1 && !math && (['svg', 'style', 'script'].includes(child.localName) || getComputedStyle(child).display === 'none')) continue;
+          // A shadow tree's styles come along with it.
+          if (child.nodeType === 1 && (['svg', 'style', 'script'].includes(child.localName) || getComputedStyle(child).display === 'none')) continue;
           out.appendChild(copy(child));
         }
         return out;
