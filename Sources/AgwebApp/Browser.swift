@@ -291,11 +291,12 @@ final class Browser {
             var message = "\(error)"
             // The ref's element is gone, so say what it was: the agent may have acted on it several replies ago.
             if let match = message.firstMatch(of: #/ref (e\d+) not found/#),
-               let label = model.workspaces.first(where: { $0.name == request.workspace })?.current?.refLabels[String(match.1)] {
+               let workspace = model.workspaces.first(where: { $0.name == request.workspace }),
+               let label = (workspace.actedOn ?? workspace.current)?.refLabels[String(match.1)] {
                 message.insert(contentsOf: " (\(label))", at: match.1.endIndex)
             }
             // A popup that opened meanwhile, or an alert: a success reply would have said so (describe), so a failure does too.
-            if let workspace = model.workspaces.first(where: { $0.name == request.workspace }) {
+            if let workspace = model.workspaces.first(where: { $0.name == request.workspace }), workspace.actedOn != nil {
                 if workspace.tabs.count > 1, workspace.tabsShown != tabsSeen(workspace) { message += "\n" + tabList(workspace) }
                 if let tab = workspace.actedOn, !tab.events.isEmpty {
                     message += "\n### Events\n" + tab.events.map { "- \($0)" }.joined(separator: "\n")
@@ -774,15 +775,15 @@ final class Browser {
             return "### Screenshot\n\(path)\n" + describe(tab, note: note)
         case "wait":
             let (result, found) = try await wait(tab, args.first, options)
+            // A wait --url can end mid-redirect, and the snapshot for Changes would stall on the next page.
+            let deadline = Date().addingTimeInterval(10)
+            while found.webView.isLoading, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
             // Matched in a tab the page opened: that tab's page, after the opener's events ("popup opened as tab 1").
             if found !== tab {
                 found.events.insert(contentsOf: tab.events, at: 0)
                 tab.events.removeAll()
                 return result + "\n" + describe(found)
             }
-            // A wait --url can end mid-redirect, and the snapshot for Changes would stall on the next page.
-            let deadline = Date().addingTimeInterval(10)
-            while webView.isLoading, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
             return result + "\n" + describe(tab) + (await changes(tab, urlBefore: urlBefore))
         case "emulate":
             guard let scheme = options["color-scheme"] else { throw Failure("use: agweb emulate --color-scheme dark|light|auto") }
@@ -1003,8 +1004,8 @@ final class Browser {
         func anywhere(_ test: @escaping (Tab) async throws -> Bool) -> () async throws -> Bool {
             {
                 if try await test(tab) { match.tab = tab; return true }
-                for popup in tab.workspace.tabs where !before.contains(popup.id) {
-                    if (try? await test(popup)) == true { match.tab = popup; return true }
+                for popup in tab.workspace.tabs where popup.opener === tab && !before.contains(popup.id) {
+                    if (try? await test(popup)) == true, tab.workspace.tabs.contains(where: { $0 === popup }) { match.tab = popup; return true }
                 }
                 return false
             }

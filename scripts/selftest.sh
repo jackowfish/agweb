@@ -558,12 +558,12 @@ check "Page" -w alpha eval "() => { setTimeout(() => open('/index.html?ad'), 100
 sleep 2
 check "0: (current)" -w alpha tab-list
 # A tab the page opens during a wait (Loom's share page when an upload ends) is where the URL shows; a wait that
-# times out still says a tab opened.
-check "Page" -w alpha eval "() => { setTimeout(() => open('/index.html?shared'), 800) }"
+# times out still says a tab opened. The timers fire well after the wait started: an idle page can't open windows.
+check "Page" -w alpha eval "() => { setTimeout(() => open('/index.html?shared'), 2000) }"
 check "for a URL containing shared in tab 1, which the page opened (now current)" -w alpha wait --url=shared --timeout=5000
 check "0: (current)" -w alpha tab-close 1
-check "Page" -w alpha eval "() => { setTimeout(() => open('/index.html?unwanted'), 300) }"
-fails "popup opened as tab 1: .*unwanted" -w alpha wait --url=never --timeout=1500
+check "Page" -w alpha eval "() => { setTimeout(() => open('/index.html?unwanted'), 1500) }"
+fails "popup opened as tab 1: .*unwanted" -w alpha wait --url=never --timeout=4000
 check "0: (current)" -w alpha tab-close 1
 check "opened in tab 1: .*index.html?next" -w alpha click 'text=Next page' middle
 check "0: (current)" -w alpha tab-close 1
