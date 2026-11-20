@@ -3,3 +3,4 @@ bin/
 .*
 !.gitignore
 !.github/
+__pycache__/
