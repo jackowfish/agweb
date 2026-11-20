@@ -327,6 +327,9 @@ check '^Nested knob$' -w ev --raw eval '(el) => el.textContent' 'role=button[nam
 check "Page" -w ev eval "() => { const h = document.createElement('div'); document.body.append(h); h.attachShadow({ mode: 'open' }).innerHTML = '<section id=op><h2>GET /op</h2><input data-pname=\\'ident\\'><button>TRY</button></section>' }"
 check 'button "TRY" \[ref=' -w ev snapshot '#op'
 check 'button "TRY" \[ref=' -w ev find "GET /op"
+# Text in a shadow root counts for wait --text and text, as on screen.
+check 'text "GET /op"' -w ev wait --text="GET /op" --timeout=2000
+check "GET /op" -w ev text --all
 check "Page" -w ev fill 'input[data-pname="ident"]' 42
 check '^42$' -w ev --raw eval '(el) => el.value' 'input[data-pname="ident"]'
 # A name longer than 120 characters ends in …, and the cut name still finds its element.

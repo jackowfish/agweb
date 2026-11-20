@@ -422,10 +422,17 @@ public enum PageScripts {
       const box = document.createElement('template');
       // Into the template's inert document: a clone in the page's would upgrade custom elements, running their code.
       const inert = box.content.ownerDocument;
+      // What a node renders: a shadow host its open shadow tree (rapi-doc's operations), a slot what was assigned to it.
+      const rendered = (node) => {
+        if (node.shadowRoot) return node.shadowRoot.childNodes;
+        if (node.localName !== 'slot') return node.childNodes;
+        const assigned = node.assignedNodes({ flatten: true });
+        return assigned.length ? assigned : node.childNodes;
+      };
       const copy = (node) => {
         const out = inert.importNode(node, false);
-        for (const child of node.childNodes) {
-          if (child.nodeType === 1 && (child.localName === 'svg' || getComputedStyle(child).display === 'none')) continue;
+        for (const child of rendered(node)) {
+          if (child.nodeType === 1 && (['svg', 'style', 'script'].includes(child.localName) || getComputedStyle(child).display === 'none')) continue;
           out.appendChild(copy(child));
         }
         return out;
@@ -653,10 +660,21 @@ public enum PageScripts {
     """
 
     public static let hasText = """
-    const texts = (doc) => [doc.body?.innerText ?? '', ...[...doc.querySelectorAll('iframe, frame')].flatMap(f => {
-      try { return f.contentDocument ? texts(f.contentDocument) : []; } catch { return []; }
-    })];
-    return String(texts(document).some(t => t.includes(text)));
+    // The page's text, then its open shadow roots' (body.innerText leaves them out), then its same-origin frames'.
+    const shadows = function* (root) {
+      for (const el of root.querySelectorAll('*')) {
+        if (!el.shadowRoot) continue;
+        for (const child of el.shadowRoot.children) yield child.innerText ?? '';
+        yield* shadows(el.shadowRoot);
+      }
+    };
+    const texts = function* (doc) {
+      yield doc.body?.innerText ?? '';
+      yield* shadows(doc);
+      for (const f of doc.querySelectorAll('iframe, frame')) { let inner = null; try { inner = f.contentDocument; } catch {} if (inner) yield* texts(inner); }
+    };
+    for (const t of texts(document)) if (t.includes(text)) return 'true';
+    return 'false';
     """
 
     /// Page world: loaded, and no fetch or XHR in flight.
