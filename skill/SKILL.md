@@ -33,7 +33,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 
 ## Targets
 
-`e12` from the last snapshot; `role=button[name="Save"]` (name is a case-insensitive substring); `text=Save` (substring) or `text="Save"` (exact); a CSS selector. Role and text targets must match exactly one visible element; the error lists the matches with their refs. Append `>> nth=0` (or `nth=-1` for the last) to pick one of several. Open shadow roots and same-origin frames are searched; CSS looks there only when the page itself has no match, and a selector can't cross into a shadow root (target the input, not `host input`).
+`e12` from the last snapshot; `role=button[name="Save"]` (name is a case-insensitive substring); `text=Save` (substring) or `text="Save"` (exact); a CSS selector. Role and text targets must match exactly one visible element; the error lists the matches with their refs. Append `>> nth=0` (or `nth=-1` for the last) to pick one of several. Open shadow roots and same-origin frames are searched; CSS looks there only when nothing the page itself matches is shown, and a selector can't cross into a shadow root or frame (target the input, not `host input`).
 
 ## Patterns
 

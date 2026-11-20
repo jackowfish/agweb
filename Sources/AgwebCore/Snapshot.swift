@@ -131,7 +131,7 @@ public enum Snapshot {
         let lines = tree.split(separator: "\n", omittingEmptySubsequences: false)
         let matching = lines.indices.filter { lines[$0].range(of: query, options: .caseInsensitive) != nil }
         guard !matching.isEmpty else { return nil }
-        let shown = matching.prefix(max), wanted = Set(shown)
+        let shown = matching.prefix(Swift.max(max, 1)), wanted = Set(shown)
         // One pass with the chain of enclosing lines: walking back from each match took 39 s for 1500 matches.
         var keep = Set<Int>(), chain: [(depth: Int, index: Int)] = []
         for index in lines.indices where index <= shown.last! {

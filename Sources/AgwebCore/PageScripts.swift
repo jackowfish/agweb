@@ -80,15 +80,16 @@ public enum PageScripts {
         if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') { let doc = null; try { doc = el.contentDocument; } catch {} if (doc) yield* all(doc); }
       }
     };
-    // A CSS selector's matches in the page; only when there are none, in every open shadow root and same-origin frame,
-    // as Playwright's CSS reaches into them. A selector stays within one root: target the input, not `host input`.
+    // A CSS selector's matches in the page; only when none of them shows, also those in every open shadow root and
+    // same-origin frame, as Playwright's CSS reaches into them (a hidden copy in the page doesn't hide a shown one
+    // there). A selector stays within one root: target the input, not `host input` or `iframe input`.
     const css = (selector) => {
       const found = [...document.querySelectorAll(selector)];
-      if (found.length) return found;
+      if (found.some(visible)) return found;
       for (const el of all(document)) {
         let root = el.shadowRoot;
         if (!root && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) { try { root = el.contentDocument; } catch {} }
-        if (root) found.push(...root.querySelectorAll(selector));
+        if (root) for (const match of root.querySelectorAll(selector)) found.push(match);
       }
       return found;
     };
@@ -244,7 +245,8 @@ public enum PageScripts {
       // A container's text shows as its children, so only a leaf is named by its content.
       const name = nameOf(node, leaf.has(role) ? role : null);
       if (name) line += ` ${JSON.stringify(name)}`;
-      if (role === 'heading') line += ` [level=${/^H[1-6]$/.test(node.tagName) ? node.tagName[1] : node.getAttribute('aria-level') || 2}]`;
+      // A number only: a page's aria-level="2] [ref=e1" must not forge another ref's line.
+      if (role === 'heading') line += ` [level=${/^H[1-6]$/.test(node.tagName) ? node.tagName[1] : parseInt(node.getAttribute('aria-level'), 10) || 2}]`;
       if (node.checked || node.getAttribute('aria-checked') === 'true') line += ' [checked]';
       if (node.getAttribute('aria-selected') === 'true') line += ' [selected]';
       if (node.getAttribute('aria-expanded') === 'true') line += ' [expanded]';

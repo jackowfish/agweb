@@ -621,7 +621,8 @@ final class Browser {
             }
             var lines = found.tree.split(separator: "\n", omittingEmptySubsequences: false)
             if !toFile, lines.count > PageScripts.maxSnapshotLines {
-                lines = lines.prefix(PageScripts.maxSnapshotLines) + ["- (cut at \(PageScripts.maxSnapshotLines) lines; find --filename saves every match)"]
+                let more = lines.last.flatMap { $0.hasPrefix("- (") && $0.hasSuffix("more; --max-results to see them)") ? $0 : nil }
+                lines = lines.prefix(PageScripts.maxSnapshotLines) + ["- (cut at \(PageScripts.maxSnapshotLines) lines; find --filename saves every match)"] + (more.map { [$0] } ?? [])
             }
             return describe(tab) + "\n### Found\n\(found.matches) line\(found.matches == 1 ? "" : "s") matching \(query.debugDescription)\n" + lines.joined(separator: "\n")
         case "text":
@@ -1132,12 +1133,11 @@ final class Browser {
         var handles: [[Int]: WKFrameInfo]?
         let snapshot = try await snapshotTree(tab, target, in: tab.frameRefs[target], handles: &handles, limit: whole ? 0 : PageScripts.maxSnapshotLines)
         if tab.refLabels.count > 20_000 { tab.refLabels.removeAll() }
-        // Role and name only: a value may be what the agent typed. Secrets are hidden before a label is cut, or a secret
-        // across the cut would show its first half; once for the whole tree, as hide is slow per line.
-        let tree = secrets.isEmpty ? snapshot.tree : Self.hide(secrets, in: snapshot.tree)
-        for line in tree.split(separator: "\n") {
+        // Role and name only: a value may be what the agent typed. Hidden before it is cut, or a secret across the cut
+        // would show its first half; hide is slow, so only when there are secrets.
+        for line in snapshot.tree.split(separator: "\n") {
             guard let (label, ref) = Snapshot.refLabel(line) else { continue }
-            tab.refLabels[String(ref)] = String(label.prefix(80))
+            tab.refLabels[String(ref)] = String((secrets.isEmpty ? String(label) : Self.hide(secrets, in: String(label))).prefix(80))
         }
         return snapshot
     }
