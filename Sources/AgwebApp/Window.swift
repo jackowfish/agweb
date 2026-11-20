@@ -310,6 +310,8 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .environment(\.sidebarRowSize, textSize.sidebarRows)
+        // Rows only as tall as their text: the sidebar's default left the selection tall and the list sparse.
+        .environment(\.defaultMinListRowHeight, 18)
         .safeAreaInset(edge: .top) {
             if let label = Agweb.label {
                 Label("Test: \(label)", systemImage: "flask").font(.caption.bold()).foregroundStyle(.orange)
@@ -349,13 +351,12 @@ private struct TabRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(driven ? Color.green : Color.clear)
-                .frame(width: 6, height: 6)
-                .help("the tab this agent is driving")
+            // The tab the agent's next command goes to reads in the normal color; its other tabs are dimmed.
             Text(tab.title.isEmpty ? (tab.url.isEmpty ? "New tab" : tab.url) : tab.title)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .foregroundStyle(driven ? .primary : .secondary)
+                .help(driven ? "The tab this workspace's agent drives" : "")
             Spacer(minLength: 0)
             if let asking = tab.asking {
                 Image(systemName: "hand.raised.fill").foregroundStyle(.orange).help("The agent asks you: \(asking)")
