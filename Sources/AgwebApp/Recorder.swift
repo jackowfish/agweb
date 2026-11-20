@@ -28,6 +28,8 @@ final class Recorder {
     private var finished = false
     private var frames = 0
     private var lastBusy = ProcessInfo.processInfo.systemUptime
+    /// Out of App Nap while recording: frames come from a 30 fps timer, between commands too.
+    private var activity: NSObjectProtocol?
 
     /// `frameSize` defaults to the viewport; another size letterboxes it.
     init(workspace: Workspace, url: URL, maxIdle: Double, frameSize: CGSize? = nil) throws {
@@ -67,6 +69,7 @@ final class Recorder {
         writer.add(input)
         guard writer.startWriting() else { throw writer.error ?? Failure("could not start writing \(url.path)") }
         writer.startSession(atSourceTime: .zero)
+        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "recording a video")
         loop = Task { @MainActor [weak self] in
             while !Task.isCancelled, let self {
                 let began = ProcessInfo.processInfo.systemUptime
@@ -89,6 +92,8 @@ final class Recorder {
         finished = true
         loop?.cancel()
         await loop?.value
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity = nil
         guard frames > 0 else {
             writer.cancelWriting()
             throw Failure("no frames were recorded; is the window closed? (agweb show)")

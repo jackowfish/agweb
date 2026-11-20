@@ -235,6 +235,10 @@ final class Browser {
 
     /// Commands for one workspace run one at a time, in arrival order; different workspaces run concurrently.
     func handle(_ request: Request) async -> Response {
+        // agweb works in the background, where App Nap would throttle its timers and main thread: a click took 2.2 s
+        // instead of 0.75 s. Only while a command waits or runs; idle pages may still nap.
+        let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "an agent's command")
+        defer { ProcessInfo.processInfo.endActivity(activity) }
         let previous = queues[request.workspace]
         let work = Task { @MainActor () -> Response in
             _ = await previous?.value
