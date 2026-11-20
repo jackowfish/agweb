@@ -87,4 +87,4 @@ Same commands where possible, so agents already know them; a Playwright name it 
 
 ## Develop
 
-`./scripts/selftest.sh` runs every command against a local page in a separate instance; `swift test` runs the unit tests. `AGWEB_ROOT=/tmp/dir` starts a second instance beside your own that keeps everything in that folder. [Defuddle](https://github.com/kepano/defuddle) (MIT) is bundled for `text`.
+`./scripts/selftest.sh` runs every command against a local page in a separate instance; `swift test` runs the unit tests. `AGWEB_ROOT=/tmp/dir` starts a second instance beside your own that keeps everything in that folder. [Defuddle](https://github.com/kepano/defuddle) (MIT) is bundled for `markdown`.
