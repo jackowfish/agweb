@@ -1,157 +1,151 @@
 {
- "commit": "3c2330a",
+ "commit": "bfdf31e-dirty",
  "date": "2026-11-20",
  "machine": "arm64, macOS 27.2",
  "cases": {
-  "goto tiny": {
-   "s": 0.341,
-   "cpu": 0.04,
-   "mb": 1255,
-   "failed": false
+  "goto (54k)": {
+   "s": 0.564,
+   "cpu": 0.318,
+   "mb": 507,
+   "error": null
   },
-  "click": {
-   "s": 0.184,
-   "cpu": 0.03,
-   "mb": 1257,
-   "failed": false
-  },
-  "fill": {
-   "s": 0.023,
-   "cpu": 0.03,
-   "mb": 1266,
-   "failed": false
-  },
-  "press Tab": {
-   "s": 0.238,
-   "cpu": 0.03,
-   "mb": 1267,
-   "failed": false
-  },
-  "wait --text": {
-   "s": 0.022,
-   "cpu": 0.0,
-   "mb": 1267,
-   "failed": false
-  },
-  "eval": {
-   "s": 0.076,
-   "cpu": 0.01,
-   "mb": 1267,
-   "failed": false
-  },
-  "screenshot": {
-   "s": 0.047,
-   "cpu": 0.03,
-   "mb": 1263,
-   "failed": false
-  },
-  "snapshot": {
-   "s": 0.032,
-   "cpu": 0.04,
-   "mb": 1274,
-   "failed": false
-  },
-  "snapshot --filename (165k lines)": {
-   "s": 0.891,
-   "cpu": 1.02,
-   "mb": 1992,
-   "failed": false
-  },
-  "find TRY": {
-   "s": 0.943,
-   "cpu": 1.1,
-   "mb": 2017,
-   "failed": false
-  },
-  "find resource_4999/": {
-   "s": 0.979,
-   "cpu": 1.24,
-   "mb": 2020,
-   "failed": false
-  },
-  "wait CSS in shadow root": {
-   "s": 0.084,
-   "cpu": 0.14,
-   "mb": 2019,
-   "failed": false
-  },
-  "snapshot #op77 (in shadow root)": {
-   "s": 0.068,
-   "cpu": 0.09,
-   "mb": 2019,
-   "failed": false
-  },
-  "click role= with a name (54k)": {
-   "s": 0.257,
-   "cpu": 0.19,
-   "mb": 2117,
-   "failed": false
-  },
-  "hover role= with a name (54k)": {
-   "s": 0.092,
-   "cpu": 0.14,
-   "mb": 2129,
-   "failed": false
+  "snapshot (54k)": {
+   "s": 0.034,
+   "cpu": 0.037,
+   "mb": 521,
+   "error": null
   },
   "click CSS (54k)": {
-   "s": 0.189,
-   "cpu": 0.04,
-   "mb": 2131,
-   "failed": false
+   "s": 0.198,
+   "cpu": 0.057,
+   "mb": 525,
+   "error": null
+  },
+  "fill (54k)": {
+   "s": 0.045,
+   "cpu": 0.057,
+   "mb": 534,
+   "error": null
+  },
+  "press (54k)": {
+   "s": 0.248,
+   "cpu": 0.068,
+   "mb": 556,
+   "error": null
+  },
+  "click role= with a name (54k)": {
+   "s": 0.266,
+   "cpu": 0.209,
+   "mb": 629,
+   "error": null
+  },
+  "hover role= with a name (54k)": {
+   "s": 0.103,
+   "cpu": 0.168,
+   "mb": 642,
+   "error": null
+  },
+  "wait --text (54k)": {
+   "s": 0.042,
+   "cpu": 0.059,
+   "mb": 642,
+   "error": null
   },
   "text (54k)": {
-   "s": 0.677,
-   "cpu": 0.83,
-   "mb": 2885,
-   "failed": false
+   "s": 0.672,
+   "cpu": 0.828,
+   "mb": 1287,
+   "error": null
   },
   "text --all (54k)": {
-   "s": 0.315,
-   "cpu": 0.42,
-   "mb": 3067,
-   "failed": false
+   "s": 0.31,
+   "cpu": 0.459,
+   "mb": 1455,
+   "error": null
+  },
+  "eval returning 2 MB (54k)": {
+   "s": 0.095,
+   "cpu": 0.075,
+   "mb": 1476,
+   "error": null
+  },
+  "screenshot (54k)": {
+   "s": 0.061,
+   "cpu": 0.077,
+   "mb": 1481,
+   "error": null
   },
   "screenshot --full-page (54k)": {
-   "s": 1.095,
-   "cpu": 1.44,
-   "mb": 3467,
-   "failed": false
+   "s": 0.994,
+   "cpu": 1.277,
+   "mb": 1804,
+   "error": null
   },
-  "eval outerHTML (2 MB)": {
-   "s": 0.076,
-   "cpu": 0.02,
-   "mb": 3203,
-   "failed": false
+  "snapshot (rapidoc)": {
+   "s": 0.035,
+   "cpu": 0.038,
+   "mb": 1036,
+   "error": null
+  },
+  "snapshot --filename (rapidoc, 165k lines)": {
+   "s": 0.858,
+   "cpu": 1.146,
+   "mb": 1802,
+   "error": null
+  },
+  "find TRY (rapidoc)": {
+   "s": 0.944,
+   "cpu": 1.237,
+   "mb": 1826,
+   "error": null
+  },
+  "find resource_4999/ (rapidoc)": {
+   "s": 0.986,
+   "cpu": 1.197,
+   "mb": 1827,
+   "error": null
+  },
+  "wait CSS in a shadow root (rapidoc)": {
+   "s": 0.094,
+   "cpu": 0.207,
+   "mb": 1828,
+   "error": null
+  },
+  "snapshot #op77 in a shadow root (rapidoc)": {
+   "s": 0.082,
+   "cpu": 0.117,
+   "mb": 1828,
+   "error": null
   },
   "text (article)": {
-   "s": 0.139,
-   "cpu": 0.15,
-   "mb": 3547,
-   "failed": false
+   "s": 0.142,
+   "cpu": 0.161,
+   "mb": 765,
+   "error": null
   },
   "pdf (article)": {
-   "s": 0.95,
-   "cpu": 0.81,
-   "mb": 3559,
-   "failed": false
+   "s": 0.852,
+   "cpu": 0.797,
+   "mb": 781,
+   "error": null
   },
-  "text --all (10k-row table)": {
-   "s": 0.608,
-   "cpu": 0.76,
-   "mb": 4727,
-   "failed": false
+  "text --all (table)": {
+   "s": 0.598,
+   "cpu": 0.769,
+   "mb": 1676,
+   "error": null
   },
-  "snapshot --filename (10k-row table)": {
-   "s": 0.197,
-   "cpu": 0.28,
-   "mb": 4511,
-   "failed": false
+  "snapshot --filename (table)": {
+   "s": 0.191,
+   "cpu": 0.299,
+   "mb": 1753,
+   "error": null
   },
-  "playwright-cli snapshot (165k lines)": {
-   "s": 2.808,
-   "cpu": 3.83,
-   "mb": 3887,
-   "failed": false
+  "playwright-cli snapshot (rapidoc, 165k lines)": {
+   "s": 2.784,
+   "cpu": 3.962,
+   "mb": 3247,
+   "error": null
   }
  }
 }

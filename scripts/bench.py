@@ -1,23 +1,29 @@
 #!/usr/bin/python3 -I
-"""Times agweb's commands on big local pages, in an instance of its own, and compares with the last saved baseline.
+"""Times agweb's commands on big local pages, in an instance of its own, and compares with the saved baseline.
 
-Run by hand before a release (not in CI: timings need a quiet Mac, and the baseline is this Mac's):
+Run by hand before a release, on a quiet Mac (not in CI: timings need one, and the baseline is this Mac's):
 
-    AGWEB_CLI=$(scripts/build.sh --test /tmp/agw-bench) scripts/bench.py [--save] [--playwright]
+    A=$(CC=/usr/bin/clang scripts/build.sh --test /tmp/agw-bench) && AGWEB_CLI=$A scripts/bench.py [--save] [--playwright]
 
-Each case runs 3 times; the table shows the median wall time, the CPU time agweb used (the app and the WebKit
-processes macOS counts as its) and their peak resident memory. A case 25% and 0.1 s slower than the baseline is
-flagged, and the exit status is the number of flagged cases. --save writes this run as the new baseline
-(scripts/bench-baseline.json); --playwright also times playwright-cli's snapshot of the same page, headless.
+Pages: like rapi-doc's API docs (nested shadow roots, a 165,000-line snapshot), 54,000 elements of form controls,
+a long article, a 10,000-row table. Each page gets a fresh instance, quit after its cases, so a case's memory is
+the instance with that one page open. Each case runs 3 times: the median wall time, the median CPU time of
+the CLI call plus the app and the WebKit processes macOS counts as its, and their peak resident memory.
+AGWEB_INSTANT=1: the pointer and typing don't move at a person's pace.
+
+A case is flagged SLOWER past 125% of its baseline time plus 0.05 s, MORE RAM past 125% plus 100 MB, and FAILED when
+any run exits non-zero; the exit status counts the flags. --save writes this run as the baseline
+(scripts/bench-baseline.json), which a failed run can't be. --playwright also times playwright-cli's snapshot of the
+rapi-doc page (its own session, headless), for comparison only: it is never flagged.
 """
-import ctypes, http.server, json, os, platform, shutil, socketserver, statistics, subprocess, sys, tempfile, threading, time
+import ctypes, http.server, json, os, platform, shutil, signal, socketserver, statistics, subprocess, sys, tempfile, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE = os.path.join(HERE, "bench-baseline.json")
-CLI = os.environ.get("AGWEB_CLI")
 RUNS = 3
+SESSION = "agweb-bench"
+PLAYWRIGHT = "playwright-cli snapshot (rapidoc, 165k lines)"
 
-# Pages: like rapi-doc's API docs (nested shadow roots), rows of controls, a long article, a big table, a tiny page.
 RAPIDOC = """<!doctype html><title>rapidoc</title><style>.op{margin:8px;border:1px solid #ccc;padding:4px} .p{cursor:pointer}</style>
 <rapi-doc></rapi-doc><script>
 const N = 5000;
@@ -28,54 +34,53 @@ customElements.define('rapi-doc', class extends HTMLElement { constructor() { su
   for (let i=0;i<N;i++) h += `<section class=op id="op${i}"><h2>GET /api/v1/resource_${i}/</h2><p>Retrieve resource ${i}. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p><div class=p tabindex=0>Expand ${i}</div><ul><li>200 OK</li><li>404 Not found</li></ul><api-request></api-request></section>`;
   this.attachShadow({mode:'open'}).innerHTML = h + '</main>'; } });
 </script>"""
-ROWS = "<!doctype html><title>rows</title><body>" + "".join(
+ROWS = "<!doctype html><title>rows</title><body><button id=top>Top</button><input id=first>" + "".join(
     f'<div><input placeholder="field {i}"><button id=b{i}>Button {i}</button><input type=checkbox><span>row {i}</span><span>a</span><span>b</span><span>c</span><span>d</span></div>'
     for i in range(6000)) + "<label for=lab>Labelled</label><input id=lab></body>"
 ARTICLE = "<!doctype html><title>article</title><body><article><h1>Article</h1>" + "".join(
-    f"<h2>Part {i}</h2>" + "<p>" + ("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt. " * 20) + "</p>"
+    f"<h2>Part {i}</h2><p>" + "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt. " * 20 + "</p>"
     for i in range(400)) + "</article></body>"
 TABLE = "<!doctype html><title>table</title><body><table><tr><th>id</th><th>name</th><th>amount</th></tr>" + "".join(
     f"<tr><td>{i}</td><td>Customer {i}</td><td>{i * 7 % 1000}.00</td></tr>" for i in range(10000)) + "</table></body>"
-TINY = "<!doctype html><title>tiny</title><body><p>Hello</p><button id=b onclick=\"this.textContent='done'\">Press</button><input id=f></body>"
-PAGES = {"rapidoc": RAPIDOC, "rows": ROWS, "article": ARTICLE, "table": TABLE, "tiny": TINY}
+PAGES = {"rows": ROWS, "rapidoc": RAPIDOC, "article": ARTICLE, "table": TABLE}
 
-# (case, page, agweb args). Each page is opened in its own workspace first.
+# (case, page, agweb args; {run} is the run's number). Cases leave their page as they found it where they can, so
+# the 3 runs do the same work.
 CASES = [
-    ("goto tiny", "tiny", ["goto", "{url}"]),
-    ("click", "tiny", ["click", "#b"]),
-    ("fill", "tiny", ["fill", "#f", "some text"]),
-    ("press Tab", "tiny", ["press", "Tab"]),
-    ("wait --text", "tiny", ["wait", "--text=Hello"]),
-    ("eval", "tiny", ["eval", "1 + 1"]),
-    ("screenshot", "tiny", ["screenshot", "--filename={dir}/tiny.png"]),
-    ("snapshot", "rapidoc", ["snapshot"]),
-    ("snapshot --filename (165k lines)", "rapidoc", ["snapshot", "--filename={dir}/rapidoc.txt"]),
-    ("find TRY", "rapidoc", ["find", "TRY"]),
-    ("find resource_4999/", "rapidoc", ["find", "resource_4999/"]),
-    ("wait CSS in shadow root", "rapidoc", ["wait", 'input[data-pname="param_1"] >> nth=0']),
-    ("snapshot #op77 (in shadow root)", "rapidoc", ["snapshot", "#op77"]),
+    ("goto (54k)", "rows", ["goto", "{base}/rows.html?n={run}"]),
+    ("snapshot (54k)", "rows", ["snapshot"]),
+    ("click CSS (54k)", "rows", ["click", "#top"]),
+    ("fill (54k)", "rows", ["fill", "#first", "text {run}"]),
+    ("press (54k)", "rows", ["press", "End"]),
     ("click role= with a name (54k)", "rows", ["click", 'role=textbox[name="field 5999"]']),
     ("hover role= with a name (54k)", "rows", ["hover", 'role=button[name="Button 5999"]']),
-    ("click CSS (54k)", "rows", ["click", "#b0"]),
+    ("wait --text (54k)", "rows", ["wait", "--text=Labelled"]),
     ("text (54k)", "rows", ["text"]),
     ("text --all (54k)", "rows", ["text", "--all"]),
-    ("screenshot --full-page (54k)", "rows", ["screenshot", "--full-page", "--filename={dir}/rows.png"]),
-    ("eval outerHTML (2 MB)", "rows", ["eval", "document.body.outerHTML.length"]),
+    ("eval returning 2 MB (54k)", "rows", ["eval", "document.body.outerHTML"]),
+    ("screenshot (54k)", "rows", ["screenshot", "--filename={work}/rows.png"]),
+    ("screenshot --full-page (54k)", "rows", ["screenshot", "--full-page", "--filename={work}/rows-full.png"]),
+    ("snapshot (rapidoc)", "rapidoc", ["snapshot"]),
+    ("snapshot --filename (rapidoc, 165k lines)", "rapidoc", ["snapshot", "--filename={work}/rapidoc.txt"]),
+    ("find TRY (rapidoc)", "rapidoc", ["find", "TRY"]),
+    ("find resource_4999/ (rapidoc)", "rapidoc", ["find", "resource_4999/"]),
+    ("wait CSS in a shadow root (rapidoc)", "rapidoc", ["wait", 'input[data-pname="param_1"] >> nth=0']),
+    ("snapshot #op77 in a shadow root (rapidoc)", "rapidoc", ["snapshot", "#op77"]),
     ("text (article)", "article", ["text"]),
-    ("pdf (article)", "article", ["pdf", "--filename={dir}/article.pdf"]),
-    ("text --all (10k-row table)", "table", ["text", "--all"]),
-    ("snapshot --filename (10k-row table)", "table", ["snapshot", "--filename={dir}/table.txt"]),
+    ("pdf (article)", "article", ["pdf", "--filename={work}/article.pdf"]),
+    ("text --all (table)", "table", ["text", "--all"]),
+    ("snapshot --filename (table)", "table", ["snapshot", "--filename={work}/table.txt"]),
 ]
 
 responsible = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
 responsible.argtypes, responsible.restype = [ctypes.c_int], ctypes.c_int
 
 
-def processes():
-    """pid -> (ppid, resident KB, CPU seconds, command) for every process."""
-    out = subprocess.run(["ps", "-axo", "pid=,ppid=,rss=,time=,command="], capture_output=True, text=True).stdout
+def processes(pids=None):
+    """pid -> (ppid, resident KB, CPU seconds, command), for every process or only `pids`."""
+    args = ["ps", "-o", "pid=,ppid=,rss=,time=,command="] + (["-p", ",".join(map(str, pids))] if pids else ["-ax"])
     table = {}
-    for line in out.splitlines():
+    for line in subprocess.run(args, capture_output=True, text=True).stdout.splitlines():
         parts = line.split(None, 4)
         if len(parts) < 5:
             continue
@@ -87,10 +92,12 @@ def processes():
 
 
 def members(table, owner):
-    """The pids of a tool: agweb's app pid and what macOS counts as its; or a playwright-cli daemon's process tree."""
+    """agweb (an app pid): the app and what macOS counts as its. Playwright: the daemon of our session and the
+    browser under it. The CLI call itself is left out of both; its CPU comes from getrusage."""
     if isinstance(owner, int):
         return {pid for pid in table if pid == owner or responsible(pid) == owner}
-    keep = {pid for pid, row in table.items() if "playwright" in row[3] and ("cli" in row[3] or "daemon" in row[3]) and "bench.py" not in row[3]}
+    me = os.getpid()
+    keep = {pid for pid, row in table.items() if SESSION in row[3] and row[0] != me and f"-s={SESSION}" not in row[3]}
     grew = True
     while grew:
         grew = False
@@ -101,41 +108,64 @@ def members(table, owner):
     return keep
 
 
-def measure(owner, command, env, cwd=None):
-    """Runs `command` while sampling the tool's processes every 50 ms: (wall s, CPU s, peak MB, exit status)."""
-    first = processes()
-    cpu = {pid: first[pid][2] for pid in members(first, owner)}
-    start_cpu = dict(cpu)
-    peak = sum(first[pid][1] for pid in cpu) / 1024
+def measure(owner, command, env, cwd):
+    """Runs `command`, sampling the tool's processes every 0.1 s: (wall s, CPU s, peak MB, error or None)."""
+    table = processes()
+    mine = members(table, owner)
+    start = {pid: table[pid][2] for pid in mine}
+    cpu, peak = dict(start), sum(table[pid][1] for pid in mine) / 1024
     done = threading.Event()
 
     def sample():
-        nonlocal peak
+        nonlocal peak, mine
+        rounds = 0
         while not done.is_set():
-            table = processes()
-            mine = members(table, owner)
-            peak = max(peak, sum(table[pid][1] for pid in mine) / 1024)
-            for pid in mine:
-                cpu[pid] = table[pid][2]
-            done.wait(0.05)
+            rounds += 1
+            if rounds % 10 == 0:  # WebKit processes started meanwhile, once a second
+                mine = members(processes(), owner)
+            now = processes(mine) if mine else {}
+            peak = max(peak, sum(row[1] for row in now.values()) / 1024)
+            for pid, row in now.items():
+                cpu[pid] = row[2]
+            done.wait(0.1)
 
-    sampler = threading.Thread(target=sample)
+    sampler = threading.Thread(target=sample, daemon=True)
     sampler.start()
-    began = time.time()
-    status = subprocess.run(command, env=env, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
-    wall = time.time() - began
-    done.set()
-    sampler.join()
-    last = processes()
-    for pid in members(last, owner):
-        cpu[pid] = last[pid][2]
-    return wall, sum(cpu[pid] - start_cpu.get(pid, 0.0) for pid in cpu), peak, status
+    began = time.perf_counter()
+    try:
+        # The CLI's own CPU from wait4: RUSAGE_CHILDREN would count the sampler's ps calls too.
+        with tempfile.TemporaryFile() as errors:
+            child = subprocess.Popen(command, env=env, cwd=cwd, stdout=subprocess.DEVNULL, stderr=errors)
+            _, status, usage = os.wait4(child.pid, 0)
+            child.returncode = os.waitstatus_to_exitcode(status)
+            errors.seek(0)
+            stderr = errors.read().decode(errors="replace")
+    finally:
+        wall = time.perf_counter() - began
+        done.set()
+        sampler.join()
+    for pid, row in (processes(mine) if mine else {}).items():
+        cpu[pid] = row[2]
+    cli = usage.ru_utime + usage.ru_stime
+    error = None if child.returncode == 0 else (stderr.strip().splitlines() or [f"exit {child.returncode}"])[-1][:160]
+    return wall, cli + sum(cpu[pid] - start.get(pid, 0.0) for pid in cpu), peak, error
 
 
-def median_of(owner, command, env, cwd=None):
-    runs = [measure(owner, command, env, cwd) for _ in range(RUNS)]
+def case_result(owner, command_for_run, env, cwd):
+    runs = [measure(owner, command_for_run(run), env, cwd) for run in range(RUNS)]
+    errors = [r[3] for r in runs if r[3]]
     return {"s": round(statistics.median(r[0] for r in runs), 3), "cpu": round(statistics.median(r[1] for r in runs), 3),
-            "mb": round(max(r[2] for r in runs)), "failed": any(r[3] != 0 for r in runs)}
+            "mb": round(max(r[2] for r in runs)), "error": errors[0] if errors else None}
+
+
+def quit_instance(agweb, root, app):
+    """Quits the instance on `root` and waits for it to exit: it does a moment after answering, writing to the root
+    and its settings meanwhile."""
+    subprocess.run([agweb, "quit"], env={"AGWEB_ROOT": root, "PATH": os.environ.get("PATH", "")}, capture_output=True)
+    for _ in range(50):
+        if app is None or subprocess.run(["kill", "-0", str(app)], capture_output=True).returncode != 0:
+            return
+        time.sleep(0.1)
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -143,81 +173,127 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+def stop(*_):
+    raise KeyboardInterrupt  # SIGTERM or SIGHUP (a stopped background run): clean up as for Ctrl-C
+
+
 def main():
     save, with_playwright = "--save" in sys.argv, "--playwright" in sys.argv
-    # A test build only: the person's app must never start a second instance of itself.
-    plist = os.path.join(os.path.dirname(os.path.realpath(CLI or "/")), "..", "Info.plist")
-    bundle = subprocess.run(["plutil", "-extract", "CFBundleIdentifier", "raw", plist], capture_output=True, text=True).stdout.strip()
-    if not bundle.endswith(".test"):
-        sys.exit("use a test build: AGWEB_CLI=$(scripts/build.sh --test /tmp/agw-bench) scripts/bench.py")
+    cli = os.environ.get("AGWEB_CLI", "")
+    plist = os.path.join(os.path.dirname(os.path.realpath(cli or "/")), "..", "Info.plist")
+    info = lambda key: subprocess.run(["plutil", "-extract", key, "raw", plist], capture_output=True, text=True).stdout.strip()
+    # A test build only, launched from its own bundle (AGWEB_APP and every other AGWEB_ setting are dropped below):
+    # the person's app must never start a second instance of itself.
+    if not info("CFBundleIdentifier").endswith(".test"):
+        sys.exit("use a test build: A=$(CC=/usr/bin/clang scripts/build.sh --test /tmp/agw-bench) && AGWEB_CLI=$A scripts/bench.py")
+    if with_playwright and not shutil.which("playwright-cli"):
+        sys.exit("--playwright needs playwright-cli on PATH")
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGHUP, stop)
+    agweb = os.path.realpath(cli)
+    binary = os.path.dirname(os.path.dirname(agweb)) + "/MacOS/"
     work = tempfile.mkdtemp(prefix="agwb-", dir="/tmp")  # short: the socket path inside the root caps near 104 bytes
     root = os.path.join(work, "r")
-    for name, html in PAGES.items():
-        with open(os.path.join(work, name + ".html"), "w") as f:
-            f.write(html)
-    with open(os.path.join(work, "blocklist.txt"), "w") as f:
-        f.write("||127.0.0.1^*blockapi\n")
-    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), lambda *a: Quiet(*a, directory=work))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-    # Its own root; no network: a local filter list and no update check.
-    env = dict(os.environ, AGWEB_ROOT=root, AGWEB_INSTANT="1", AGWEB_ADBLOCK_LISTS=base + "/blocklist.txt", AGWEB_UPDATE_FEED=base + "/none.json")
-    env.pop("AGWEB_WORKSPACE", None)
-    env.pop("AGWEB_PROFILE", None)
-    suite = "agweb.root" + root.replace("/", "_")
-    agweb = os.path.realpath(CLI)
-    app = os.path.dirname(os.path.dirname(agweb))  # .../Agweb.app/Contents
-    results = {}
+    suite = "agweb.root" + root.replace("/", "_")  # Agweb.settingsSuite
+    server, app, results, playwright_open = None, None, {}, False
     try:
+        for name, html in PAGES.items():
+            with open(os.path.join(work, name + ".html"), "w") as f:
+                f.write(html)
+        with open(os.path.join(work, "blocklist.txt"), "w") as f:
+            f.write("||127.0.0.1^*blockapi\n")
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), lambda *a: Quiet(*a, directory=work))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        # Its own root and nothing from the caller's AGWEB_ settings; no network: a local filter list, no update check.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("AGWEB_")}
+        env.update(AGWEB_ROOT=root, AGWEB_INSTANT="1", AGWEB_ADBLOCK_LISTS=base + "/blocklist.txt", AGWEB_UPDATE_FEED=base + "/none.json")
+        run = lambda *args: subprocess.run([agweb, *args], env=env, capture_output=True, text=True)
+        running = lambda: set(subprocess.run(["pgrep", "-f", binary], capture_output=True, text=True).stdout.split())
         for page in PAGES:
-            subprocess.run([agweb, "-w", page, "open", f"{base}/{page}.html"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(2)
-        found = subprocess.run(["pgrep", "-f", app + "/MacOS/"], capture_output=True, text=True).stdout.split()
-        if not found:
-            sys.exit(f"agweb did not start from {agweb}")
-        pid = int(found[0])
-        for case, page, args in CASES:
-            args = [a.format(url=f"{base}/{page}.html?again", dir=work) for a in args]
-            results[case] = median_of(pid, [agweb, "-w", page] + args, env)
-            print(f"  {case}: {results[case]['s']:.2f} s", file=sys.stderr)
+            # A fresh instance per page, so a case's memory is that page's, not what earlier pages left behind.
+            before = running()
+            opened = run("-w", page, "open", f"{base}/{page}.html")
+            if opened.returncode != 0:
+                raise SystemExit(f"could not open {page}: {(opened.stdout + opened.stderr).strip()}")
+            new = running() - before
+            if len(new) != 1:
+                raise SystemExit(f"cannot tell which process is this instance: {sorted(new)}")
+            app = int(new.pop())
+            run("-w", page, "wait", "--load")
+            time.sleep(1)  # the first layout and its background work, out of the first case
+            for case, case_page, args in CASES:
+                if case_page != page:
+                    continue
+                command = [agweb, "-w", page] + [a.format(base=base, work=work, run="{run}") for a in args]
+                results[case] = case_result(app, lambda r, command=command: [a.replace("{run}", str(r)) for a in command], env, work)
+                failed = results[case]["error"]
+                print(f"  {case}: {results[case]['s']:.2f} s" + (f"  FAILED: {failed}" if failed else ""), file=sys.stderr)
+            quit_instance(agweb, root, app)
+            app = None
         if with_playwright:
-            subprocess.run(["playwright-cli", "-s=agweb-bench", "open", f"{base}/rapidoc.html"], cwd=work, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            playwright_open = True
+            subprocess.run(["playwright-cli", f"-s={SESSION}", "open", f"{base}/rapidoc.html"], cwd=work, capture_output=True)
             time.sleep(2)
-            results["playwright-cli snapshot (165k lines)"] = median_of("playwright", ["playwright-cli", "-s=agweb-bench", "snapshot"], os.environ, cwd=work)
-            subprocess.run(["playwright-cli", "-s=agweb-bench", "close"], cwd=work, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            results[PLAYWRIGHT] = case_result("playwright", lambda r: ["playwright-cli", f"-s={SESSION}", "snapshot"], dict(os.environ), work)
+    except KeyboardInterrupt:
+        results = None
     finally:
-        subprocess.run([agweb, "quit"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        server.shutdown()
-        subprocess.run(["defaults", "delete", suite], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        plist = os.path.expanduser(f"~/Library/Preferences/{suite}.plist")
-        if os.path.exists(plist):
-            os.remove(plist)
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):  # a second Ctrl-C mustn't cut the cleanup short
+            signal.signal(sig, signal.SIG_IGN)
+        if playwright_open:
+            subprocess.run(["playwright-cli", f"-s={SESSION}", "close"], cwd=work, capture_output=True)
+        quit_instance(agweb, root, app)
+        if server:
+            server.shutdown()
+        subprocess.run(["defaults", "delete", suite], capture_output=True)
+        prefs = os.path.expanduser(f"~/Library/Preferences/{suite}.plist")
+        if os.path.exists(prefs):
+            os.remove(prefs)
         shutil.rmtree(work, ignore_errors=True)
+    if results is None:
+        sys.exit("stopped; cleaned up")
+    report(results, save, info("AgwebCommit"))
 
+
+def report(results, save, commit):
     baseline = {}
     if os.path.exists(BASELINE):
         with open(BASELINE) as f:
             baseline = json.load(f)
-    old = baseline.get("cases", {})
-    flagged = 0
-    print("| Case | Time | CPU | Peak RAM | Baseline | |")
+    old, machine = baseline.get("cases", {}), f"{platform.machine()}, macOS {platform.mac_ver()[0]}"
+    flags = 0
+    print("| Case | Time | CPU | Peak RAM | Baseline time / RAM | |")
     print("|---|---|---|---|---|---|")
     for case, r in results.items():
-        was = old.get(case, {}).get("s")
-        slower = was is not None and r["s"] > was * 1.25 and r["s"] - was > 0.1
-        flagged += slower
-        mark = "FAILED" if r["failed"] else "SLOWER" if slower else ""
-        print(f"| {case} | {r['s']:.2f} s | {r['cpu']:.2f} s | {r['mb']} MB | {f'{was:.2f} s' if was is not None else '-'} | {mark} |")
+        was = old.get(case, {})
+        marks = []
+        if r["error"]:
+            marks.append("FAILED: " + r["error"])
+        if "s" in was and r["s"] > was["s"] * 1.25 + 0.05:
+            marks.append("SLOWER")
+        if "mb" in was and r["mb"] > was["mb"] * 1.25 + 100:
+            marks.append("MORE RAM")
+        if case != PLAYWRIGHT:
+            flags += bool(marks)
+        then = f"{was['s']:.2f} s / {was['mb']} MB" if was else "-"
+        print(f"| {case} | {r['s']:.2f} s | {r['cpu']:.2f} s | {r['mb']} MB | {then} | {', '.join(marks)} |")
+    missing = [case for case in old if case not in results and case != PLAYWRIGHT]
+    if missing:
+        print(f"\nIn the baseline but not run: {', '.join(missing)}")
     if baseline:
-        print(f"\nBaseline: {baseline.get('commit', '?')} on {baseline.get('date', '?')}, {baseline.get('machine', '?')}")
+        print(f"\nBaseline: {baseline.get('commit', '?')} on {baseline.get('date', '?')}, {baseline.get('machine', '?')}"
+              + ("" if baseline.get("machine") == machine else f"; this Mac is {machine}, so compare with care"))
     if save:
-        commit = subprocess.run(["git", "-C", HERE, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-        machine = f"{platform.machine()}, macOS {platform.mac_ver()[0]}"
+        if any(r["error"] for r in results.values()):
+            sys.exit("not saved: a case failed")
+        if PLAYWRIGHT not in results and PLAYWRIGHT in old:
+            results[PLAYWRIGHT] = old[PLAYWRIGHT]
         with open(BASELINE, "w") as f:
-            json.dump({"commit": commit, "date": time.strftime("%Y-%m-%d"), "machine": machine, "cases": results}, f, indent=1)
+            json.dump({"commit": commit or "?", "date": time.strftime("%Y-%m-%d"), "machine": machine, "cases": results}, f, indent=1)
             f.write("\n")
         print(f"saved as the baseline: {BASELINE}")
-    sys.exit(flagged)
+    sys.exit(flags)
 
 
 if __name__ == "__main__":
