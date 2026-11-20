@@ -64,7 +64,8 @@ extension Browser {
 
     /// Defuddle is 770 KB, so it loads into a page's agent world only when `text` first runs there.
     /// The markdown, and whether the page had no article so all of it was converted.
-    func pageText(_ tab: Tab, target: String?, all: Bool = false) async throws -> (markdown: String, whole: Bool, kept: Int, shown: Int, hidden: Bool, dropped: Int) {
+    /// `huge`: the element count of a page too big to look for its article in (0 otherwise).
+    func pageText(_ tab: Tab, target: String?, all: Bool = false) async throws -> (markdown: String, whole: Bool, kept: Int, shown: Int, hidden: Bool, dropped: Int, huge: Int) {
         let frame = target.flatMap { tab.frameRefs[$0] }
         if try await tab.call("return typeof Defuddle", frame: frame) != "function" {
             guard let url = Bundle.main.url(forResource: "defuddle", withExtension: "js"), let source = try? String(contentsOf: url, encoding: .utf8) else {
@@ -75,8 +76,10 @@ extension Browser {
             }
         }
         let reply = try await tab.call(PageScripts.text, ["target": target ?? "", "everything": all])
-        let parsed = try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any]
-        return (parsed?["markdown"] as? String ?? "", parsed?["whole"] as? Bool ?? false, parsed?["kept"] as? Int ?? 0, parsed?["shown"] as? Int ?? 0, parsed?["hidden"] as? Bool ?? false, parsed?["dropped"] as? Int ?? 0)
+        // JSONDecoder: JSONSerialization's NSString made every later pass over a long page's markdown crawl.
+        struct Reply: Decodable { let markdown: String?, whole: Bool?, kept: Int?, shown: Int?, hidden: Bool?, dropped: Int?, huge: Int? }
+        let parsed = try JSONDecoder().decode(Reply.self, from: Data(reply.utf8))
+        return (parsed.markdown ?? "", parsed.whole ?? false, parsed.kept ?? 0, parsed.shown ?? 0, parsed.hidden ?? false, parsed.dropped ?? 0, parsed.huge ?? 0)
     }
 
     func routeList(_ workspace: Workspace) -> String {

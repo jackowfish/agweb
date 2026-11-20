@@ -237,6 +237,10 @@ check 'link "Link 2400" \[ref=' -w lst find "Link 2400"
 check "cut at 2000 lines; find --filename saves every match" -w lst find "Link" --max-results=1500
 check "$dir/found.md" -w lst find "Link" --filename="$dir/found.md"
 grep -q '^2500 lines matching' "$dir/found.md" && grep -q 'link "Link 2500"' "$dir/found.md" || fail "find --filename did not save every match"
+# A page too big to look for its article in comes back whole, saying so.
+printf '<html><body>%s</body></html>' "$(for i in $(seq 1 6000); do printf '<p><b>w%d</b> <i>v</i></p>' $i; done)" > "$dir/huge.html"
+check "Page" -w lst goto "http://127.0.0.1:$port/huge.html"
+check "a very large page (1[0-9]* elements), so this is all of it" -w lst text
 check "closed" -w lst close
 grep -q 'Press me' "$dir/page.md" || fail "text --filename did not write the page"
 check "Page" -w alpha eval "() => { const d = document.createElement('div'); d.id = 'veiled'; d.hidden = true; d.textContent = 'Hidden waiting state'; document.body.append(d) }"

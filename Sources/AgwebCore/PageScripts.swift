@@ -444,13 +444,16 @@ public enum PageScripts {
     };
     const md = (box) => Defuddle.createMarkdownContent(box.innerHTML, location.href);
     const words = (s) => (s.match(/\\S+/g) || []).length;
-    const reply = (markdown, whole = false, kept = 0, shown = 0) => JSON.stringify({ markdown, whole, kept, shown, dropped });
+    const reply = (markdown, whole = false, kept = 0, shown = 0, huge = 0) => JSON.stringify({ markdown, whole, kept, shown, dropped, huge });
     if (target) {
       const el = find(target);
       return JSON.stringify({ markdown: md(shownCopy(el, false)), hidden: !el.checkVisibility(), dropped });
     }
     const body = () => { dropped = 0; return md(shownCopy(document.body, true)); };
     if (everything) return reply(body(), true);
+    // Defuddle scores every element, 3.4 s on a 42,000-element feed whatever its options; a page that big comes back whole.
+    const elements = document.getElementsByTagName('*').length;
+    if (elements > 15000) return reply(body(), true, 0, 0, elements);
     const page = new Defuddle(document, { url: location.href }).parse();
     if (page.wordCount < 50) return reply(body(), true);
     // The article can leave out what a reader came for, such as a pricing page's plans: say how much it kept,

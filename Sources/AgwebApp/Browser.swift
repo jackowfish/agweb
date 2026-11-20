@@ -641,7 +641,8 @@ final class Browser {
                 text.hidden ? "\(target) is hidden on the page (an inactive tab panel, a closed menu); show it first, e.g. click its tab"
                     : text.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "\(target) shows no text yet; it may fill once loaded (wait --text)" : nil }
-            let note = empty ?? (all ? nil : text.whole ? "no article here, so this is the whole page"
+            let note = empty ?? (all ? nil : text.huge > 0 ? "a very large page (\(text.huge) elements), so this is all of it, not only its article; text <target> reads one part"
+                : text.whole ? "no article here, so this is the whole page"
                 : text.shown > 300 && text.kept * 2 < text.shown ? "main content only: \(text.kept) of \(text.shown) words on the page; text --all for all of it" : nil)
             let images = text.dropped == 0 ? nil
                 : "\(text.dropped) inline image\(text.dropped == 1 ? "" : "s") shortened to alt text (data: URLs); snapshot lists them with refs to screenshot"
