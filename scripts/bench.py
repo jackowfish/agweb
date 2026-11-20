@@ -150,7 +150,11 @@ def measure(owner, command, env, cwd):
         wall = time.perf_counter() - began
         done.set()
         sampler.join()
-    for pid, row in (processes(mine) if mine else {}).items():
+    # A last sample, with processes started meanwhile: a short case may have had none, and growth at its end counts.
+    mine = members(processes(), owner)
+    now = processes(mine) if mine else {}
+    peak = max(peak, sum(row[1] for row in now.values()) / 1024)
+    for pid, row in now.items():
         cpu[pid] = row[2]
     cli = usage.ru_utime + usage.ru_stime
     error = None if child.returncode == 0 else (stderr.strip().splitlines() or [f"exit {child.returncode}"])[-1][:160]
@@ -247,16 +251,19 @@ def main():
                 failed = results[case]["error"]
                 print(f"  {case}: {results[case]['s']:.2f} s" + (f"  FAILED: {failed}" if failed else ""), file=sys.stderr)
             # Closed first: a workspace still open at quit is saved and reopened, loading, by the next page's instance.
-            run("-w", page, "close")
+            closed = run("-w", page, "close")
+            if closed.returncode != 0:
+                raise SystemExit(f"could not close {page}: {(closed.stdout + closed.stderr).strip()}")
             quit_instance(agweb, root, ours)
             app = None
         if with_playwright:
             playwright_open = True
             opened = subprocess.run(["playwright-cli", f"-s={SESSION}", "open", f"{base}/rapidoc.html"], cwd=work, capture_output=True, text=True)
-            if opened.returncode != 0:
-                raise SystemExit(f"playwright-cli could not open the page: {(opened.stdout + opened.stderr).strip()[-300:]}")
-            time.sleep(2)
-            results[PLAYWRIGHT] = case_result("playwright", lambda r: ["playwright-cli", f"-s={SESSION}", "snapshot"], dict(os.environ), work)
+            if opened.returncode != 0:  # comparison only: agweb's results still count
+                results[PLAYWRIGHT] = {"s": 0, "cpu": 0, "mb": 0, "added": 0, "error": "could not open the page: " + (opened.stdout + opened.stderr).strip()[-200:]}
+            else:
+                time.sleep(2)
+                results[PLAYWRIGHT] = case_result("playwright", lambda r: ["playwright-cli", f"-s={SESSION}", "snapshot"], dict(os.environ), work)
     except KeyboardInterrupt:
         results = None
     finally:
@@ -264,8 +271,7 @@ def main():
             signal.signal(sig, signal.SIG_IGN)
         if playwright_open:
             subprocess.run(["playwright-cli", f"-s={SESSION}", "close"], cwd=work, capture_output=True)
-        if ours():
-            quit_instance(agweb, root, ours)
+        quit_instance(agweb, root, ours)  # also when this run never found its instance
         if server:
             server.shutdown()
         subprocess.run(["defaults", "delete", suite], capture_output=True)
@@ -310,6 +316,8 @@ def report(results, save, commit):
     if save:
         if any(r["error"] for case, r in results.items() if case != PLAYWRIGHT):
             sys.exit("not saved: a case failed")
+        if not commit or commit.endswith("-dirty"):
+            sys.exit(f"not saved: build from a committed tree (this build is {commit or 'unstamped'})")
         if (PLAYWRIGHT not in results or results[PLAYWRIGHT]["error"]) and PLAYWRIGHT in old:
             results[PLAYWRIGHT] = old[PLAYWRIGHT]
         results = {case: {k: v for k, v in r.items() if k != "error"} for case, r in results.items()}
