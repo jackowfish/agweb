@@ -20,7 +20,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 (--diff: only what changed since the last snapshot; an element keeps its ref)
   find <text>                   the whole page's snapshot lines containing text, each with the lines above it and up to
                                 10 after it in its container (--max-results=20; --filename saves every match)
-  text [target]                 the page's main content (an article) or one element as markdown (--all: the whole page)
+  markdown [target]             the page's main content (an article) or one element as markdown (--all: the whole page)
   click <target> [right|middle] native trusted click: the pointer glides there like a person's (--js: element.click());
                                 fails if something covers the target, such as a cookie dialog (--force: click anyway)
   dblclick <target>             native double click
@@ -104,7 +104,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
 --instant                       pointer verbs, scrolling, upload and type act at once instead of at human speed
 --timeout=MS                    actions wait this long for their target to show (default 5000) and for anything covering it
                                 to go (default 1000); 0: don't wait; wait: 30000
---filename=PATH                 snapshot, find, text, eval, request and response-body: write the answer to a file instead
+--filename=PATH                 snapshot, find, markdown, eval, request and response-body: write the answer to a file instead
 --download-dir=DIR              where downloads nobody named go (default $AGWEB_DOWNLOAD_DIR, else .agweb/)
 --raw                           print only the answer (eval's value, a snapshot), strings unquoted; events and notes go to stderr
 --json                          print the reply as one JSON object
@@ -386,7 +386,7 @@ guard let response = sendRequest(Request(workspace: workspace, command: command,
     fail("no response from agweb on \(socket)")
 }
 guard response.ok, let path = writeAnswerTo else {
-    finish(response.ok && command == "text" ? Output.capText(response.output) : response.output, ok: response.ok)
+    finish(response.ok && command == "markdown" ? Output.capText(response.output) : response.output, ok: response.ok)
 }
 
 // Replace the answer with the file it went to; the page sections stay.

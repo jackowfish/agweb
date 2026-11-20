@@ -79,9 +79,9 @@ agweb -w t wait 1500 # fixed pause; last resort
 **Reading data.**
 
 ```sh
-agweb -w t --raw text # an article as markdown; a listing or other page with no article comes back whole
-agweb -w t --raw text e12 # one element; on a feed or listing, the list's container reads cleaner than the page
-agweb -w t --raw text --all # the whole page: the article can leave out plans, prices or sidebars
+agweb -w t --raw markdown # an article as markdown; a listing or other page with no article comes back whole
+agweb -w t --raw markdown e12 # one element; on a feed or listing, the list's container reads cleaner than the page
+agweb -w t --raw markdown --all # the whole page: the article can leave out plans, prices or sidebars
 agweb -w t snapshot e12 # structure: rows, cells, links, with refs to act on
 agweb -w t --raw eval "[...document.querySelectorAll('table tr')].map(r => [...r.cells].map(c => c.innerText.trim()).join(' | ')).join('\n')"
 agweb -w t --raw eval "[...document.querySelectorAll('article')].map(a => ({title: a.querySelector('h2')?.innerText, url: a.querySelector('a')?.href}))" # records as JSON: each field read inside its row, so a missing one can't shift the others
@@ -90,7 +90,7 @@ agweb -w t --json eval "document.title" # {ok, result, page} for scripts
 agweb -w t find "Invoice" # the whole page's lines holding the text, with refs, the lines above them and up to 10 after; --filename saves every match
 ```
 
-`--raw` prints just the answer; Events and notes go to stderr. A snapshot prints at most 2000 lines and `text` 50 KB: `--filename=page.md` saves all of either, to grep or read in parts. `text` shortens images inlined as base64 to `![alt](<data:image/png… 4 KB cut>)`: to see one, `screenshot` its ref. `js` is `eval`, for sandboxes that refuse the word.
+`--raw` prints just the answer; Events and notes go to stderr. A snapshot prints at most 2000 lines and `markdown` 50 KB: `--filename=page.md` saves all of either, to grep or read in parts. `markdown` shortens images inlined as base64 to `![alt](<data:image/png… 4 KB cut>)`: to see one, `screenshot` its ref. `js` is `eval`, for sandboxes that refuse the word.
 
 **Dropdowns and custom selects.**
 

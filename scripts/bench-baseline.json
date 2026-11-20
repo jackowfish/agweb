@@ -51,13 +51,13 @@
    "mb": 657,
    "added": 0
   },
-  "text (54k)": {
+  "markdown (54k)": {
    "s": 0.338,
    "cpu": 0.499,
    "mb": 1303,
    "added": 515
   },
-  "text --all (54k)": {
+  "markdown --all (54k)": {
    "s": 0.3,
    "cpu": 0.429,
    "mb": 1304,
@@ -117,7 +117,7 @@
    "mb": 1607,
    "added": 0
   },
-  "text (article)": {
+  "markdown (article)": {
    "s": 0.123,
    "cpu": 0.15,
    "mb": 554,
@@ -129,7 +129,7 @@
    "mb": 568,
    "added": 11
   },
-  "text --all (table)": {
+  "markdown --all (table)": {
    "s": 0.593,
    "cpu": 0.781,
    "mb": 1475,

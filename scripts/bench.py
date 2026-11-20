@@ -56,8 +56,8 @@ CASES = [
     ("click role= with a name (54k)", "rows", ["click", 'role=textbox[name="field 5999"]']),
     ("hover role= with a name (54k)", "rows", ["hover", 'role=button[name="Button 5999"]']),
     ("wait --text (54k)", "rows", ["wait", "--text=Labelled"]),
-    ("text (54k)", "rows", ["text"]),
-    ("text --all (54k)", "rows", ["text", "--all"]),
+    ("markdown (54k)", "rows", ["markdown"]),
+    ("markdown --all (54k)", "rows", ["markdown", "--all"]),
     ("eval returning 2 MB (54k)", "rows", ["eval", "document.body.outerHTML"]),
     ("screenshot (54k)", "rows", ["screenshot", "--filename={work}/rows.png"]),
     ("screenshot --full-page (54k)", "rows", ["screenshot", "--full-page", "--filename={work}/rows-full.png"]),
@@ -67,9 +67,9 @@ CASES = [
     ("find resource_4999/ (rapidoc)", "rapidoc", ["find", "resource_4999/"]),
     ("wait CSS in a shadow root (rapidoc)", "rapidoc", ["wait", 'input[data-pname="param_1"] >> nth=0']),
     ("snapshot #op77 in a shadow root (rapidoc)", "rapidoc", ["snapshot", "#op77"]),
-    ("text (article)", "article", ["text"]),
+    ("markdown (article)", "article", ["markdown"]),
     ("pdf (article)", "article", ["pdf", "--filename={work}/article.pdf"]),
-    ("text --all (table)", "table", ["text", "--all"]),
+    ("markdown --all (table)", "table", ["markdown", "--all"]),
     ("snapshot --filename (table)", "table", ["snapshot", "--filename={work}/table.txt"]),
 ]
 

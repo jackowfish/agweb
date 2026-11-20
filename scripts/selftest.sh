@@ -191,10 +191,10 @@ check "$dir/el.png" -w alpha screenshot '#b' --path="$dir/el.png"
 check "continues [0-9]* px below the viewport" -w alpha screenshot --filename="$dir/top.png"
 check "Screenshot" -w alpha screenshot --full-page --filename="$dir/full.jpg"
 [ "$(sips -g pixelHeight "$dir/full.jpg" | awk '/pixelHeight/ {print $2}')" -gt 3000 ] || fail "screenshot --full-page is not the whole page"
-check '^\[Next page\](/index.html?next)$' -w alpha --raw text 'a'
-check "$dir/page.md" -w alpha text --filename="$dir/page.md"
-check "no article here" -w alpha text
-check "^agweb: Note: no article here" -w alpha --raw text
+check '^\[Next page\](/index.html?next)$' -w alpha --raw markdown 'a'
+check "$dir/page.md" -w alpha markdown --filename="$dir/page.md"
+check "no article here" -w alpha markdown
+check "^agweb: Note: no article here" -w alpha --raw markdown
 # A listing whose main part keeps under half the page comes back whole; a page that says it is an article stays one.
 links=$(for i in $(seq 1 60); do printf '<li><a href="/s%d">Story number %d about something new today</a></li>' $i $i; done)
 # Inline data: images (Google's thumbnails) keep their alt and type, not their base64; one with no alt goes.
@@ -203,27 +203,27 @@ para="<p>$(for i in $(seq 1 90); do printf 'word%d ' $i; done)<img width=\"300\"
 printf '<html><head><title>List</title>%s</head><body><nav><ul>%s</ul></nav><main><article><h1>Top</h1>%s</article></main></body></html>' '' "$links" "$para" > "$dir/listing.html"
 printf '<html><head><title>Story</title>%s</head><body><nav><ul>%s</ul></nav><main><article><h1>Top</h1>%s</article></main></body></html>' '<meta property="og:type" content="article">' "$links" "$para" > "$dir/story.html"
 check "Page" -w lst open "http://127.0.0.1:$port/listing.html"
-check "no article here, so this is the whole page" -w lst text
-check "agweb: Note: no article here" -w lst --raw text
-check "Story number 60" -w lst --raw text
-check '!\[Tiny dot\](<data:image/png… [0-9]* KB cut>)' -w lst --raw text
-check "2 inline images" -w lst text
-check 'lazy-real.jpg' -w lst --raw text
-lacks "base64" -w lst text --all
+check "no article here, so this is the whole page" -w lst markdown
+check "agweb: Note: no article here" -w lst --raw markdown
+check "Story number 60" -w lst --raw markdown
+check '!\[Tiny dot\](<data:image/png… [0-9]* KB cut>)' -w lst --raw markdown
+check "2 inline images" -w lst markdown
+check 'lazy-real.jpg' -w lst --raw markdown
+lacks "base64" -w lst markdown --all
 check "Page" -w lst goto "http://127.0.0.1:$port/story.html"
-check "main content only: [0-9]* of [0-9]* words on the page; text --all for all of it" -w lst text
-lacks "Story number 60" -w lst --raw text
-check '!\[Tiny dot\](<data:image/png… [0-9]* KB cut>)' -w lst --raw text
-lacks "base64" -w lst text
+check "main content only: [0-9]* of [0-9]* words on the page; markdown --all for all of it" -w lst markdown
+lacks "Story number 60" -w lst --raw markdown
+check '!\[Tiny dot\](<data:image/png… [0-9]* KB cut>)' -w lst --raw markdown
+lacks "base64" -w lst markdown
 # A page past 50 KB prints its start and says where it was cut; --filename saves all of it.
 big="<p>$(for i in $(seq 1 9000); do printf 'para%d ' $i; done)</p><p>The very end</p>"
 printf '<html><head><title>Big</title></head><body>%s</body></html>' "$big" > "$dir/big.html"
 check "Page" -w lst goto "http://127.0.0.1:$port/big.html"
-check "(cut at [0-9]* KB of [0-9]* KB: text <ref> reads one part, --filename=page.md saves all of it)$" -w lst --raw text
-lacks "The very end" -w lst text
-check "^agweb: Note: text cut at [0-9]* KB of [0-9]* KB; --filename saves all of it" -w lst --raw text
-check "$dir/big.md" -w lst text --filename="$dir/big.md"
-grep -q 'The very end' "$dir/big.md" || fail "text --filename did not save the whole page"
+check "(cut at [0-9]* KB of [0-9]* KB: markdown <ref> reads one part, --filename=page.md saves all of it)$" -w lst --raw markdown
+lacks "The very end" -w lst markdown
+check "^agweb: Note: markdown cut at [0-9]* KB of [0-9]* KB; --filename saves all of it" -w lst --raw markdown
+check "$dir/big.md" -w lst markdown --filename="$dir/big.md"
+grep -q 'The very end' "$dir/big.md" || fail "markdown --filename did not save the whole page"
 # A snapshot prints 2000 lines; --filename saves every one, and a plain snapshot after it is capped again.
 printf '<html><body><ul>%s</ul></body></html>' "$(for i in $(seq 1 2500); do printf '<li><a href="/l%d">Link %d</a></li>' $i $i; done)" > "$dir/many.html"
 check "Page" -w lst goto "http://127.0.0.1:$port/many.html"
@@ -240,15 +240,15 @@ grep -q '^2500 lines matching' "$dir/found.md" && grep -q 'link "Link 2500"' "$d
 # A page too big to look for its article in comes back whole, saying so.
 printf '<html><body>%s</body></html>' "$(for i in $(seq 1 6000); do printf '<p><b>w%d</b> <i>v</i></p>' $i; done)" > "$dir/huge.html"
 check "Page" -w lst goto "http://127.0.0.1:$port/huge.html"
-check "a very large page (1[0-9]* elements), so this is all of it" -w lst text
+check "a very large page (1[0-9]* elements), so this is all of it" -w lst markdown
 check "closed" -w lst close
-grep -q 'Press me' "$dir/page.md" || fail "text --filename did not write the page"
+grep -q 'Press me' "$dir/page.md" || fail "markdown --filename did not write the page"
 check "Page" -w alpha eval "() => { const d = document.createElement('div'); d.id = 'veiled'; d.hidden = true; d.textContent = 'Hidden waiting state'; document.body.append(d) }"
-lacks "Hidden waiting state" -w alpha text
-lacks "Hidden waiting state" -w alpha text body
-check "#veiled is hidden on the page" -w alpha text '#veiled'
+lacks "Hidden waiting state" -w alpha markdown
+lacks "Hidden waiting state" -w alpha markdown body
+check "#veiled is hidden on the page" -w alpha markdown '#veiled'
 check "Page" -w alpha eval "() => { const g = document.getElementById('veiled'); g.hidden = false; g.textContent = '' }"
-check "#veiled shows no text yet" -w alpha text '#veiled'
+check "#veiled shows no text yet" -w alpha markdown '#veiled'
 check "Page" -w alpha eval "() => document.getElementById('veiled').remove()"
 # A hidden copy first (a collapsed quick-login form): CSS targets the one a person sees.
 check "Page" -w alpha eval "() => { for (const hidden of [true, false]) { const i = document.createElement('input'); i.className = 'twin'; i.hidden = hidden; document.body.append(i) } }"
@@ -258,7 +258,7 @@ check '"seen"' -w alpha eval "() => document.querySelectorAll('.twin')[1].value 
 fails "now: .twin\[hidden\] is on the page but hidden" -w alpha wait '.twin[hidden]' --timeout=300
 check "Page" -w alpha eval "() => document.querySelectorAll('.twin').forEach(e => e.remove())"
 check "Cloudflare check.*mousemove [0-9]* [0-9]*" -w alpha goto "$u?challenge=1"
-check '"note":"Cloudflare check' -w alpha --json text
+check '"note":"Cloudflare check' -w alpha --json markdown
 lacks "Cloudflare check" -w alpha go-back
 # Across a page change to another site (a new web process), as a challenge page hands over to the real one.
 check "Page" -w alpha eval "() => setTimeout(() => location.assign('http://localhost:$port/side.html'), 300)"
@@ -333,7 +333,7 @@ check 'button "TRY" \[ref=' -w ev snapshot '#op'
 check 'button "TRY" \[ref=' -w ev find "GET /op"
 # Text in a shadow root counts for wait --text and text, as on screen.
 check 'text "GET /op"' -w ev wait --text="GET /op" --timeout=2000
-check "GET /op" -w ev text --all
+check "GET /op" -w ev markdown --all
 # Only shown shadow text counts: not a hidden child or a style's CSS; text loose in a shadow root does.
 check "Page" -w ev eval "() => { const h = document.createElement('div'); document.body.append(h); const r = h.attachShadow({ mode: 'open' }); r.innerHTML = '<style>/* Phantomcss */</style><div hidden>Phantomtext</div>'; r.append('Loose words') }"
 check 'text "Loose words"' -w ev wait --text="Loose words" --timeout=2000
@@ -401,7 +401,7 @@ fails "#locked is disabled" -w alpha uncheck '#locked' --timeout=300
 check "agweb go-forward:" help go-forward
 check "agweb 0." version
 check "agweb 0." --version
-lacks "dialog-accept" help text
+lacks "dialog-accept" help markdown
 check "Page" -w alpha eval "() => ['later', 'never', 'locked'].forEach(id => document.getElementById(id).remove())"
 check "Page" -w alpha uncheck '#cb'
 check 'false' -w alpha eval 'cb.checked'

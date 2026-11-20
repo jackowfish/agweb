@@ -633,7 +633,7 @@ final class Browser {
                 lines = lines.prefix(PageScripts.maxSnapshotLines) + ["- (cut at \(PageScripts.maxSnapshotLines) lines; find --filename saves every match)"] + (more.map { [$0] } ?? [])
             }
             return describe(tab) + "\n### Found\n\(found.matches) line\(found.matches == 1 ? "" : "s") matching \(query.debugDescription)\n" + lines.joined(separator: "\n")
-        case "text":
+        case "markdown":
             let all = options["all"] != nil
             let text = try await pageText(tab, target: args.first, all: all)
             // An inactive tab panel or a closed menu: empty with nothing said looks like a broken page.
@@ -641,9 +641,9 @@ final class Browser {
                 text.hidden ? "\(target) is hidden on the page (an inactive tab panel, a closed menu); show it first, e.g. click its tab"
                     : text.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? "\(target) shows no text yet; it may fill once loaded (wait --text)" : nil }
-            let note = empty ?? (all ? nil : text.huge > 0 ? "a very large page (\(text.huge) elements), so this is all of it, not only its article; text <target> reads one part"
+            let note = empty ?? (all ? nil : text.huge > 0 ? "a very large page (\(text.huge) elements), so this is all of it, not only its article; markdown <target> reads one part"
                 : text.whole ? "no article here, so this is the whole page"
-                : text.shown > 300 && text.kept * 2 < text.shown ? "main content only: \(text.kept) of \(text.shown) words on the page; text --all for all of it" : nil)
+                : text.shown > 300 && text.kept * 2 < text.shown ? "main content only: \(text.kept) of \(text.shown) words on the page; markdown --all for all of it" : nil)
             let images = text.dropped == 0 ? nil
                 : "\(text.dropped) inline image\(text.dropped == 1 ? "" : "s") shortened to alt text (data: URLs); snapshot lists them with refs to screenshot"
             let notes = [note, images].compactMap { $0 }
@@ -787,7 +787,7 @@ final class Browser {
             var note: String?
             if args.isEmpty, options["full-page"] == nil,
                let below = Int(try await tab.call("return String(document.documentElement.scrollHeight - scrollY - innerHeight)", world: .page)), below > 0 {
-                note = "the page continues \(below) px below the viewport: --full-page for all of it, text eN to read a long element"
+                note = "the page continues \(below) px below the viewport: --full-page for all of it, markdown eN to read a long element"
             }
             return "### Screenshot\n\(path)\n" + describe(tab, note: note)
         case "wait":
@@ -1518,7 +1518,7 @@ final class Browser {
     // MARK: Output
 
     /// Cloudflare passes some browsers at once and asks others to tick a checkbox, which sits in a closed shadow root
-    /// in a cross-origin frame: snapshot, text and click can't reach it, a native click at its spot can.
+    /// in a cross-origin frame: snapshot, markdown and click can't reach it, a native click at its spot can.
     /// The checkbox appears by script after the load, so a reply right after goto may not have its spot yet.
     private func challengeNote(_ tab: Tab) async -> String {
         let start = "Cloudflare check. If it is still here after about 10 s, it waits for a click on its \"Verify you are human\" "

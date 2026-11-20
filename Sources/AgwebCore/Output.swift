@@ -4,7 +4,7 @@ import Foundation
 public enum Output {
     /// Sections that describe the tab rather than answer the command.
     static let context: Set = ["Page", "Tabs", "Events"]
-    /// Every title the app emits; a `### Heading` in an answer (an article from `text`, a response body) is content.
+    /// Every title the app emits; a `### Heading` in an answer (an article from `markdown`, a response body) is content.
     static let titles: Set = context.union(["Result", "Snapshot", "Changes", "Found", "Download", "PDF", "Screenshot", "Video", "Routes", "Static", "History"])
 
     static func isTitle(_ title: Substring) -> Bool {
@@ -38,7 +38,7 @@ public enum Output {
         }
     }
 
-    /// `text` prints at most this many bytes of its answer, so one page (a feed, a huge table) can't fill an agent's context.
+    /// `markdown` prints at most this many bytes of its answer, so one page (a feed, a huge table) can't fill an agent's context.
     public static let textLimit = 50_000
 
     /// A page's `### History` or `### Request body` would read as a reply section and end the answer there; one level
@@ -50,7 +50,7 @@ public enum Output {
             .map { $0.hasPrefix("### ") && isTitle($0.dropFirst(4)) ? "#" + $0 : $0 }.joined(separator: "\n")
     }
 
-    /// A `text` reply cut to `limit` bytes at a line break, ending with a line that says so, and a Page note for --raw's
+    /// A `markdown` reply cut to `limit` bytes at a line break, ending with a line that says so, and a Page note for --raw's
     /// stderr; `--filename` writes it whole.
     public static func capText(_ text: String, limit: Int = textLimit) -> String {
         var parts = sections(text)
@@ -65,8 +65,8 @@ public enum Output {
         }
         let kb = { (bytes: Int) in "\(max(1, Int((Double(bytes) / 1000).rounded()))) KB" }
         parts[i].body = kept.trimmingCharacters(in: .whitespacesAndNewlines)
-            + "\n\n… (cut at \(kb(kept.utf8.count)) of \(kb(body.utf8.count)): text <ref> reads one part, --filename=page.md saves all of it)"
-        let note = "text cut at \(kb(kept.utf8.count)) of \(kb(body.utf8.count)); --filename saves all of it"
+            + "\n\n… (cut at \(kb(kept.utf8.count)) of \(kb(body.utf8.count)): markdown <ref> reads one part, --filename=page.md saves all of it)"
+        let note = "markdown cut at \(kb(kept.utf8.count)) of \(kb(body.utf8.count)); --filename saves all of it"
         if let page = parts.firstIndex(where: { $0.title == "Page" }) {
             var lines = parts[page].body.components(separatedBy: "\n")
             if let n = lines.firstIndex(where: { $0.hasPrefix("- Note: ") }) { lines[n] += "; " + note } else { lines.append("- Note: " + note) }
