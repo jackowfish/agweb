@@ -56,6 +56,20 @@ public enum PageScripts {
       for (const hidden of el.querySelectorAll('[aria-hidden="true"]')) text = text.replace(hidden.innerText || '\\u0000', ' ');
       return text;
     };
+    // A control's first label. el.labels scans the control's whole tree on every read, so naming 6000 inputs took 1.6 s;
+    // each tree's labels are mapped once per script run instead.
+    const labelMaps = new Map();
+    const labelOf = (el) => {
+      if (!('labels' in el)) return null;
+      const root = el.getRootNode();
+      let map = labelMaps.get(root);
+      if (!map) {
+        map = new Map();
+        for (const label of root.querySelectorAll?.('label') ?? []) { const control = label.control; if (control && !map.has(control)) map.set(control, label); }
+        labelMaps.set(root, map);
+      }
+      return map.get(el) ?? null;
+    };
     const nameOf = (el, role = roleOf(el)) => {
       const root = el.getRootNode();
       // Without aria-hidden parts: a required "*" and icon ligatures ("help") are not part of a name.
@@ -65,7 +79,7 @@ public enum PageScripts {
         .map(id => id && root.getElementById?.(id) || el.ownerDocument.getElementById(id)).filter(Boolean).map(spoken).join(' ');
       const button = el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type);
       return clean(
-        labelledBy || el.getAttribute('aria-label') || el.labels?.[0]?.innerText || el.getAttribute('alt') ||
+        labelledBy || el.getAttribute('aria-label') || labelOf(el)?.innerText || el.getAttribute('alt') ||
         (button ? el.value : '') || (fromContent.has(role) && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) ? shownText(el) : '') ||
         (fromContent.has(role) ? el.querySelector?.('img[alt]')?.getAttribute('alt') : '') ||
         el.getAttribute('title') || el.getAttribute('placeholder') || ''

@@ -1,4 +1,6 @@
 import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 import WebKit
 import AgwebCore
 
@@ -329,8 +331,9 @@ final class Browser {
             guard model.dashboardOpen else { return "dashboard hidden" }
             mainWindow.showQuietly()
             guard let path = options["filename"] else { return "dashboard shown" }
-            // Long enough for the first round of thumbnails.
-            try await Task.sleep(for: .seconds(2))
+            // The tabs' pictures first, then a moment for the grid to draw them.
+            await refreshThumbnails()
+            try await Task.sleep(for: .milliseconds(300))
             guard let png = mainWindow.dashboardPNG() else { throw Failure("could not draw the dashboard") }
             let url = URL(fileURLWithPath: path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -771,12 +774,16 @@ final class Browser {
             let path = try options["filename"] ?? { throw Failure("missing --filename") }()
             let image = try await screenshot(tab, target: args.first, fullPage: options["full-page"] != nil)
             let jpeg = ["jpg", "jpeg"].contains(URL(fileURLWithPath: path).pathExtension.lowercased())
-            guard let tiff = image.tiffRepresentation,
-                  let data = NSBitmapImageRep(data: tiff)?.representation(using: jpeg ? .jpeg : .png, properties: jpeg ? [.compressionFactor: 0.85] : [:]) else {
+            // Straight from the CGImage: through a TIFF and an NSBitmapImageRep, a full page's PNG took most of its 0.9 s.
+            let data = NSMutableData()
+            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                  let destination = CGImageDestinationCreateWithData(data, (jpeg ? UTType.jpeg : UTType.png).identifier as CFString, 1, nil) else {
                 throw Failure("could not encode screenshot")
             }
+            CGImageDestinationAddImage(destination, cgImage, jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary : nil)
+            guard CGImageDestinationFinalize(destination) else { throw Failure("could not encode screenshot") }
             try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: URL(fileURLWithPath: path))
+            try (data as Data).write(to: URL(fileURLWithPath: path))
             var note: String?
             if args.isEmpty, options["full-page"] == nil,
                let below = Int(try await tab.call("return String(document.documentElement.scrollHeight - scrollY - innerHeight)", world: .page)), below > 0 {

@@ -28,7 +28,7 @@ extension Browser {
         }
     }
 
-    private func refreshThumbnails() async {
+    func refreshThumbnails() async {
         let config = WKSnapshotConfiguration()
         config.snapshotWidth = 480
         for tab in model.workspaces.flatMap(\.tabs) where tab.pendingURL == nil && tab.webView.url != nil {
