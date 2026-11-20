@@ -432,7 +432,9 @@ public enum PageScripts {
       const copy = (node) => {
         const out = inert.importNode(node, false);
         for (const child of rendered(node)) {
-          if (child.nodeType === 1 && (['svg', 'style', 'script'].includes(child.localName) || getComputedStyle(child).display === 'none')) continue;
+          // A shadow tree's styles come along with it; a script stays only as math (MathJax's math/tex).
+          if (child.nodeType === 1 && (['svg', 'style'].includes(child.localName) || (child.localName === 'script' && !/math/i.test(child.type))
+            || getComputedStyle(child).display === 'none')) continue;
           out.appendChild(copy(child));
         }
         return out;
@@ -451,9 +453,14 @@ public enum PageScripts {
     }
     const body = () => { dropped = 0; return md(shownCopy(document.body, true)); };
     if (everything) return reply(body(), true);
-    // Defuddle scores every element, 3.4 s on a 42,000-element feed whatever its options; a page that big comes back whole.
-    const elements = document.getElementsByTagName('*').length;
-    if (elements > 15000) return reply(body(), true, 0, 0, elements);
+    // A page that says it is an article: og:type or schema.org JSON-LD.
+    const declared = document.querySelector('meta[property="og:type"]')?.content === 'article' ||
+      [...document.querySelectorAll('script[type="application/ld+json"]')].some(s => /"@type"\\s*:\\s*\\[?\\s*"(\\w*Article|BlogPosting)"/.test(s.textContent));
+    // Defuddle scores every element (shadow roots flattened in), 3.4 s on a 42,000-element feed whatever its options;
+    // a page that big comes back whole, unless it says it is an article.
+    const count = (root) => { let n = root.querySelectorAll('*').length; for (const el of root.querySelectorAll('*')) if (el.shadowRoot) n += count(el.shadowRoot); return n; };
+    const elements = count(document);
+    if (elements > 15000 && !declared) return reply(body(), true, 0, 0, elements);
     const page = new Defuddle(document, { url: location.href }).parse();
     if (page.wordCount < 50) return reply(body(), true);
     // The article can leave out what a reader came for, such as a pricing page's plans: say how much it kept,
@@ -462,8 +469,6 @@ public enum PageScripts {
     const kept = words(article.content.textContent), shown = words(document.body.innerText);
     // A listing or docs index kept under half loses its rows, so it comes back whole, unless the page says it is an
     // article or one of Defuddle's site extractors (Hacker News, Reddit, GitHub) read it.
-    const declared = document.querySelector('meta[property="og:type"]')?.content === 'article' ||
-      [...document.querySelectorAll('script[type="application/ld+json"]')].some(s => /"@type"\\s*:\\s*\\[?\\s*"(\\w*Article|BlogPosting)"/.test(s.textContent));
     if (shown > 300 && kept * 2 < shown && !declared && !page.extractorType) return reply(body(), true);
     return reply((page.title ? `# ${page.title}\\n\\n` : '') + md(article), false, kept, shown);
     """
@@ -663,11 +668,15 @@ public enum PageScripts {
     """
 
     public static let hasText = """
-    // The page's text, then its open shadow roots' (body.innerText leaves them out), then its same-origin frames'.
+    // The page's text, then each shown open shadow root's (body.innerText leaves them out), then its same-origin
+    // frames'. Only what is on screen: innerText of an element that isn't rendered is all its text, a <style>'s CSS
+    // included, so hidden children, styles and hidden hosts are left out, as body.innerText leaves out hidden text.
+    const shown = (el) => el.checkVisibility({ visibilityProperty: true }) || getComputedStyle(el).display === 'contents';
     const shadows = function* (root) {
       for (const el of root.querySelectorAll('*')) {
-        if (!el.shadowRoot) continue;
-        for (const child of el.shadowRoot.children) yield child.innerText ?? '';
+        if (!el.shadowRoot || !shown(el)) continue;
+        yield [...el.shadowRoot.childNodes].map(n => n.nodeType === 3 ? n.textContent
+          : n.nodeType === 1 && !['STYLE', 'SCRIPT', 'TEMPLATE'].includes(n.tagName) && shown(n) ? n.innerText : '').join(' ');
         yield* shadows(el.shadowRoot);
       }
     };

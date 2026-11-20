@@ -334,6 +334,11 @@ check 'button "TRY" \[ref=' -w ev find "GET /op"
 # Text in a shadow root counts for wait --text and text, as on screen.
 check 'text "GET /op"' -w ev wait --text="GET /op" --timeout=2000
 check "GET /op" -w ev text --all
+# Only shown shadow text counts: not a hidden child or a style's CSS; text loose in a shadow root does.
+check "Page" -w ev eval "() => { const h = document.createElement('div'); document.body.append(h); const r = h.attachShadow({ mode: 'open' }); r.innerHTML = '<style>/* Phantomcss */</style><div hidden>Phantomtext</div>'; r.append('Loose words') }"
+check 'text "Loose words"' -w ev wait --text="Loose words" --timeout=2000
+fails "timed out" -w ev wait --text=Phantomtext --timeout=500
+fails "timed out" -w ev wait --text=Phantomcss --timeout=500
 check "Page" -w ev fill 'input[data-pname="ident"]' 42
 check '^42$' -w ev --raw eval '(el) => el.value' 'input[data-pname="ident"]'
 # A name longer than 120 characters ends in …, and the cut name still finds its element.
