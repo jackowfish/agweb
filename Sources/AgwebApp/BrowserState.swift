@@ -62,7 +62,7 @@ extension Browser {
         }
     }
 
-    /// Defuddle is 770 KB, so it loads into a page's agent world only when `markdown` first runs there.
+    /// Defuddle is 780 KB, so it loads into a page's agent world only when `markdown` first runs there.
     /// The markdown, and whether the page had no article so all of it was converted.
     /// `huge`: the element count of a page too big to look for its article in (0 otherwise).
     func pageText(_ tab: Tab, target: String?, all: Bool = false) async throws -> (markdown: String, whole: Bool, kept: Int, shown: Int, hidden: Bool, dropped: Int, huge: Int) {
