@@ -114,6 +114,7 @@ agweb -w t fill e31 --secret-cmd 'pass show card/number' # a card field in Strip
 agweb -w t dialog-accept # before the click; confirm()/prompt() are dismissed by default. dialog-accept "answer" for prompt()
 agweb -w t click e7 # ### Events: "alert: ...", "confirm accepted: ..."; alert text is in this reply, not later
 agweb -w t click e8 # "popup opened as tab 1" and the popup is now current, with the tab list
+agweb -w t wait --url=/share/ # also matches in a tab the page opens meanwhile, and says which
 agweb -w t tab-list # tab-select 0 to go back; tab-close 1 when done with it
 ```
 

@@ -294,6 +294,14 @@ final class Browser {
                let label = model.workspaces.first(where: { $0.name == request.workspace })?.current?.refLabels[String(match.1)] {
                 message.insert(contentsOf: " (\(label))", at: match.1.endIndex)
             }
+            // A popup that opened meanwhile, or an alert: a success reply would have said so (describe), so a failure does too.
+            if let workspace = model.workspaces.first(where: { $0.name == request.workspace }) {
+                if workspace.tabs.count > 1, workspace.tabsShown != tabsSeen(workspace) { message += "\n" + tabList(workspace) }
+                if let tab = workspace.actedOn, !tab.events.isEmpty {
+                    message += "\n### Events\n" + tab.events.map { "- \($0)" }.joined(separator: "\n")
+                    tab.events.removeAll()
+                }
+            }
             response = Response(ok: false, output: Self.hide(secrets, in: "Error: " + message))
         }
         #if AGWEB_COMMAND_LOG
@@ -765,7 +773,13 @@ final class Browser {
             }
             return "### Screenshot\n\(path)\n" + describe(tab, note: note)
         case "wait":
-            let result = try await wait(tab, args.first, options)
+            let (result, found) = try await wait(tab, args.first, options)
+            // Matched in a tab the page opened: that tab's page, after the opener's events ("popup opened as tab 1").
+            if found !== tab {
+                found.events.insert(contentsOf: tab.events, at: 0)
+                tab.events.removeAll()
+                return result + "\n" + describe(found)
+            }
             // A wait --url can end mid-redirect, and the snapshot for Changes would stall on the next page.
             let deadline = Date().addingTimeInterval(10)
             while webView.isLoading, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
@@ -936,7 +950,8 @@ final class Browser {
 
     /// `wait 1500` sleeps; otherwise polls until the target shows (or with --gone, leaves), the text or URL appears,
     /// or with --load the page has loaded and no fetch/XHR has been in flight for half a second.
-    private func wait(_ tab: Tab, _ arg: String?, _ options: [String: String]) async throws -> String {
+    /// Also the tab the match showed in: `tab`, or one the page opened meanwhile.
+    private func wait(_ tab: Tab, _ arg: String?, _ options: [String: String]) async throws -> (result: String, tab: Tab) {
         let timeout = try options["timeout"].map { text -> Double in
             guard let ms = Double(text), (0...600_000).contains(ms) else { throw Failure("--timeout is milliseconds, up to 600000") }
             return ms / 1000
@@ -946,7 +961,7 @@ final class Browser {
             // A recording shows the whole wait: the agent paused so the viewer can read something.
             tab.workspace.recorder?.hold(ms / 1000)
             try await Task.sleep(for: .milliseconds(ms))
-            return "### Result\nwaited \(Int(ms)) ms"
+            return ("### Result\nwaited \(Int(ms)) ms", tab)
         }
         guard let condition = condition(tab, arg, options) else {
             throw Failure("use: agweb wait <ms> | <target> [--gone] | --text=… | --url=… | --load  [--timeout=ms]")
@@ -954,6 +969,7 @@ final class Browser {
         let waited: Double
         do {
             waited = try await poll(timeout, condition.what, condition.check)
+            if condition.matched() !== tab { return ("### Result\nwaited \(String(format: "%.1f", waited)) s for \(condition.what)\(elsewhere(condition.matched(), tab))", condition.matched()) }
         } catch let error as Failure where error.description.hasPrefix("timed out") && arg != nil && options["gone"] == nil {
             guard let arg else { throw error }
             // Why the target still misses: a role= miss lists that role's visible elements, so the next try needs no snapshot.
@@ -969,27 +985,43 @@ final class Browser {
         // The first check runs before any sleep: an agent expecting new text usually matched old text.
         if waited < 0.1 {
             if let arg, options["gone"] != nil {
-                return "### Result\nalready true when wait started: nothing visible matches \(arg). If it was on screen, the selector is off (text=\"...\" is the element's whole text)"
+                return ("### Result\nalready true when wait started: nothing visible matches \(arg). If it was on screen, the selector is off (text=\"...\" is the element's whole text)", tab)
             }
-            return "### Result\nalready true when wait started: \(condition.what)"
+            return ("### Result\nalready true when wait started: \(condition.what)", tab)
         }
-        return "### Result\nwaited \(String(format: "%.1f", waited)) s for \(condition.what)"
+        return ("### Result\nwaited \(String(format: "%.1f", waited)) s for \(condition.what)", tab)
     }
 
     /// What `wait` and `ask` wait for: a target to show (or go), text, a URL, or a quiet network; nil if none.
-    private func condition(_ tab: Tab, _ arg: String?, _ options: [String: String]) -> (what: String, check: () async throws -> Bool)? {
+    /// A target, text or URL may also show in a tab the page opens meanwhile (Loom opens the share page in a new tab
+    /// when an upload ends): `matched` is the tab it showed in. --gone and --load are about `tab` alone.
+    private func condition(_ tab: Tab, _ arg: String?, _ options: [String: String])
+        -> (what: String, check: () async throws -> Bool, matched: () -> Tab)? {
+        final class Match { var tab: Tab; init(_ tab: Tab) { self.tab = tab } }
+        let match = Match(tab), before = Set(tab.workspace.tabs.map(\.id))
+        // `tab` first, so its errors (a bad selector) end the wait; a popup's (still loading, closed) only skip it.
+        func anywhere(_ test: @escaping (Tab) async throws -> Bool) -> () async throws -> Bool {
+            {
+                if try await test(tab) { match.tab = tab; return true }
+                for popup in tab.workspace.tabs where !before.contains(popup.id) {
+                    if (try? await test(popup)) == true { match.tab = popup; return true }
+                }
+                return false
+            }
+        }
         let what: String
         let check: () async throws -> Bool
         if let target = arg {
             let gone = options["gone"] != nil, enabled = options["enabled"] != nil
             what = gone ? "\(target) to go" : enabled ? "\(target) to be enabled" : target
-            check = { try await tab.call(PageScripts.present, ["target": target, "gone": gone, "attached": false, "enabled": enabled], timeout: 3) == "true" }
+            let test = { (tab: Tab) in try await tab.call(PageScripts.present, ["target": target, "gone": gone, "attached": false, "enabled": enabled], timeout: 3) == "true" }
+            check = gone ? { try await test(tab) } : anywhere(test)
         } else if let text = options["text"] {
             what = "text \(text.debugDescription)"
-            check = { try await tab.call(PageScripts.hasText, ["text": text], timeout: 3) == "true" }
+            check = anywhere { try await $0.call(PageScripts.hasText, ["text": text], timeout: 3) == "true" }
         } else if let url = options["url"] {
             what = "a URL containing \(url)"
-            check = { tab.webView.url?.absoluteString.contains(url) ?? false }
+            check = anywhere { $0.webView.url?.absoluteString.contains(url) ?? false }
         } else if options["load"] != nil {
             what = "the page to load and the network to go quiet"
             var quietSince: Double?
@@ -1003,7 +1035,13 @@ final class Browser {
         } else {
             return nil
         }
-        return (what, check)
+        return (what, check, { match.tab })
+    }
+
+    /// Where a wait's match showed, when not in the tab it watched.
+    private func elsewhere(_ found: Tab, _ tab: Tab) -> String {
+        guard found !== tab, let index = found.workspace.tabs.firstIndex(where: { $0 === found }) else { return "" }
+        return " in tab \(index), which the page opened" + (found.id == found.workspace.currentID ? " (now current)" : "; tab-select \(index) to drive it")
     }
 
     /// Hands the tab to the person: shows it, puts the message in a bar over it with a Done button and marks it in
@@ -1029,7 +1067,8 @@ final class Browser {
             if done.on { return true }
             return try await condition?.check() ?? false
         }
-        let how = done.on ? "the person clicked Done" : "\(condition?.what ?? "") (the person didn't need to click Done)"
+        let found = condition.map { elsewhere($0.matched(), tab) } ?? ""
+        let how = done.on ? "the person clicked Done" : "\(condition?.what ?? "")\(found) (the person didn't need to click Done)"
         return "### Result\n\(how) after \(String(format: "%.0f", waited)) s"
     }
 
