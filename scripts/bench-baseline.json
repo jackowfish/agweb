@@ -1,151 +1,151 @@
 {
- "commit": "e3de559",
+ "commit": "467bbd8",
  "date": "2026-11-20",
  "machine": "Mac14,6 arm64, macOS 27.2",
  "cases": {
   "goto (54k)": {
-   "s": 0.557,
-   "cpu": 0.317,
-   "mb": 510,
+   "s": 0.564,
+   "cpu": 0.327,
+   "mb": 511,
    "added": 51
   },
   "snapshot (54k)": {
-   "s": 0.035,
-   "cpu": 0.048,
-   "mb": 530,
+   "s": 0.027,
+   "cpu": 0.037,
+   "mb": 532,
    "added": 11
   },
   "click CSS (54k)": {
-   "s": 0.197,
-   "cpu": 0.066,
-   "mb": 532,
-   "added": 1
+   "s": 0.198,
+   "cpu": 0.057,
+   "mb": 544,
+   "added": 4
   },
   "fill (54k)": {
-   "s": 0.043,
-   "cpu": 0.066,
-   "mb": 541,
-   "added": 9
+   "s": 0.039,
+   "cpu": 0.057,
+   "mb": 559,
+   "added": 7
   },
   "press (54k)": {
-   "s": 0.246,
-   "cpu": 0.057,
-   "mb": 561,
-   "added": 19
+   "s": 0.24,
+   "cpu": 0.067,
+   "mb": 596,
+   "added": 25
   },
   "click role= with a name (54k)": {
-   "s": 0.268,
-   "cpu": 0.216,
-   "mb": 659,
-   "added": 83
+   "s": 0.275,
+   "cpu": 0.197,
+   "mb": 656,
+   "added": 28
   },
   "hover role= with a name (54k)": {
-   "s": 0.108,
-   "cpu": 0.178,
-   "mb": 813,
-   "added": 62
+   "s": 0.102,
+   "cpu": 0.177,
+   "mb": 657,
+   "added": 1
   },
   "wait --text (54k)": {
-   "s": 0.043,
+   "s": 0.038,
    "cpu": 0.057,
-   "mb": 813,
+   "mb": 657,
    "added": 0
   },
   "text (54k)": {
-   "s": 0.643,
-   "cpu": 0.838,
-   "mb": 1381,
-   "added": 554
+   "s": 0.338,
+   "cpu": 0.499,
+   "mb": 1303,
+   "added": 515
   },
   "text --all (54k)": {
-   "s": 0.31,
-   "cpu": 0.458,
-   "mb": 1512,
-   "added": 90
+   "s": 0.3,
+   "cpu": 0.429,
+   "mb": 1304,
+   "added": 2
   },
   "eval returning 2 MB (54k)": {
-   "s": 0.094,
-   "cpu": 0.074,
-   "mb": 1523,
-   "added": 5
+   "s": 0.098,
+   "cpu": 0.084,
+   "mb": 1317,
+   "added": 6
   },
   "screenshot (54k)": {
    "s": 0.061,
-   "cpu": 0.077,
-   "mb": 1524,
-   "added": 1
+   "cpu": 0.067,
+   "mb": 1317,
+   "added": 0
   },
   "screenshot --full-page (54k)": {
-   "s": 0.984,
-   "cpu": 1.256,
-   "mb": 1858,
-   "added": 251
+   "s": 1.003,
+   "cpu": 1.307,
+   "mb": 1670,
+   "added": 301
   },
   "snapshot (rapidoc)": {
-   "s": 0.036,
-   "cpu": 0.038,
-   "mb": 830,
-   "added": 8
+   "s": 0.037,
+   "cpu": 0.047,
+   "mb": 829,
+   "added": 9
   },
   "snapshot --filename (rapidoc, 165k lines)": {
-   "s": 0.801,
+   "s": 0.828,
    "cpu": 1.115,
-   "mb": 1587,
-   "added": 479
+   "mb": 1598,
+   "added": 474
   },
   "find TRY (rapidoc)": {
-   "s": 0.939,
-   "cpu": 1.217,
-   "mb": 1596,
-   "added": 10
-  },
-  "find resource_4999/ (rapidoc)": {
-   "s": 0.956,
-   "cpu": 1.147,
-   "mb": 1595,
-   "added": 1
-  },
-  "wait CSS in a shadow root (rapidoc)": {
-   "s": 0.09,
-   "cpu": 0.167,
-   "mb": 1598,
+   "s": 0.951,
+   "cpu": 1.176,
+   "mb": 1601,
    "added": 2
   },
+  "find resource_4999/ (rapidoc)": {
+   "s": 0.976,
+   "cpu": 1.207,
+   "mb": 1605,
+   "added": 2
+  },
+  "wait CSS in a shadow root (rapidoc)": {
+   "s": 0.086,
+   "cpu": 0.177,
+   "mb": 1607,
+   "added": 3
+  },
   "snapshot #op77 in a shadow root (rapidoc)": {
-   "s": 0.076,
+   "s": 0.08,
    "cpu": 0.117,
-   "mb": 1591,
+   "mb": 1607,
    "added": 0
   },
   "text (article)": {
-   "s": 0.131,
+   "s": 0.123,
    "cpu": 0.15,
-   "mb": 557,
+   "mb": 554,
    "added": 342
   },
   "pdf (article)": {
-   "s": 0.847,
+   "s": 0.85,
    "cpu": 0.776,
-   "mb": 570,
+   "mb": 568,
    "added": 11
   },
   "text --all (table)": {
-   "s": 0.571,
-   "cpu": 0.749,
-   "mb": 1479,
-   "added": 1059
+   "s": 0.593,
+   "cpu": 0.781,
+   "mb": 1475,
+   "added": 1056
   },
   "snapshot --filename (table)": {
-   "s": 0.185,
-   "cpu": 0.298,
-   "mb": 1555,
-   "added": 67
+   "s": 0.179,
+   "cpu": 0.259,
+   "mb": 1545,
+   "added": 65
   },
   "playwright-cli snapshot (rapidoc, 165k lines)": {
-   "s": 2.752,
-   "cpu": 4.133,
-   "mb": 3074,
-   "added": 376
+   "s": 2.868,
+   "cpu": 3.842,
+   "mb": 2696,
+   "added": 159
   }
  }
 }
