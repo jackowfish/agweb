@@ -600,7 +600,7 @@ final class Browser {
             let snapshot = try await snapshotTree(tab, target, whole: whole)
             let last = tab.snapshots[target]
             if tab.snapshots.count > 8 { tab.snapshots = tab.snapshots.filter { $0.key.isEmpty } }
-            if !whole || snapshot.tree.split(separator: "\n").count <= PageScripts.maxSnapshotLines { tab.snapshots[target] = snapshot }
+            if !whole || snapshot.tree.utf8.lazy.filter({ $0 == 10 }).count < PageScripts.maxSnapshotLines { tab.snapshots[target] = snapshot }
             let tree = snapshot.tree
             // Refs last as long as their element, so a line that didn't change is the same element.
             if options["diff"] != nil, let last, last.doc == snapshot.doc {
@@ -1135,7 +1135,7 @@ final class Browser {
         if tab.refLabels.count > 20_000 { tab.refLabels.removeAll() }
         // Role and name only: a value may be what the agent typed. Hidden before it is cut, or a secret across the cut
         // would show its first half; hide is slow, so only when there are secrets.
-        for line in snapshot.tree.split(separator: "\n") {
+        for line in Output.lines(snapshot.tree) {
             guard let (label, ref) = Snapshot.refLabel(line) else { continue }
             tab.refLabels[String(ref)] = String((secrets.isEmpty ? String(label) : Self.hide(secrets, in: String(label))).prefix(80))
         }
@@ -1148,14 +1148,15 @@ final class Browser {
     private func snapshotTree(_ tab: Tab, _ target: String, in frame: Frame?, handles: inout [[Int]: WKFrameInfo]?, path: [Int]? = nil, limit: Int) async throws -> (doc: String, tree: String) {
         // A frame that never answers (mid-navigation) costs at most a few seconds; it then stays an empty iframe.
         let reply = try await tab.call(PageScripts.snapshot, ["target": target, "limit": limit], frame: frame, timeout: frame == nil ? 30 : 5)
-        let parsed = try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any]
+        // JSONDecoder, not JSONSerialization: that hands back an NSString, which Swift walks character by character
+        // through the bridge, so every split and search of a big tree crawled (a 165,000-line tree, a second a pass).
+        let parsed = try JSONDecoder().decode(SnapshotReply.self, from: Data(reply.utf8))
         // Before anything is thrown away: the refs it handed out are taken either way.
-        if let next = parsed?["next"] as? Int { tab.workspace.refSeed = max(tab.workspace.refSeed, next) }
-        if let path, parsed?["path"] as? [Int] != path { throw Failure("the frame moved") }
-        let tree = parsed?["tree"] as? String ?? ""
-        let frames = parsed?["frames"] as? [[String: Any]] ?? []
-        if let frame { for ref in parsed?["refs"] as? [String] ?? [] { tab.frameRefs[ref] = frame } }
-        guard !frames.isEmpty else { return (parsed?["doc"] as? String ?? "", tree) }
+        if let next = parsed.next { tab.workspace.refSeed = max(tab.workspace.refSeed, next) }
+        if let path, parsed.path != path { throw Failure("the frame moved") }
+        let tree = parsed.tree, frames = parsed.frames
+        if let frame { for ref in parsed.refs ?? [] { tab.frameRefs[ref] = frame } }
+        guard !frames.isEmpty else { return (parsed.doc ?? "", tree) }
         if handles == nil {
             // All at once: a page may have dozens of frames, and one mid-navigation takes the whole timeout.
             let asked = await tab.subframes().map { info in
@@ -1175,12 +1176,18 @@ final class Browser {
                 continue
             }
             // A frame that doesn't answer (still loading, or gone) stays an empty iframe, as before.
-            guard let path = frames[index]["path"] as? [Int], let info = handles?[path], let element = frames[index]["ref"] as? String,
-                  let inner = try? await snapshotTree(tab, "", in: Frame(info: info, parent: frame, element: element), handles: &handles, path: path, limit: limit).tree,
+            guard let path = frames[index].path, let info = handles?[path],
+                  let inner = try? await snapshotTree(tab, "", in: Frame(info: info, parent: frame, element: frames[index].ref), handles: &handles, path: path, limit: limit).tree,
                   !inner.isEmpty else { continue }
             lines += inner.split(separator: "\n").map { String(indent + $0) }
         }
-        return (parsed?["doc"] as? String ?? "", lines.joined(separator: "\n"))
+        return (parsed.doc ?? "", lines.joined(separator: "\n"))
+    }
+
+    /// What PageScripts.snapshot returns; `refs` only from a cross-origin frame, whose refs the app must route to it.
+    private struct SnapshotReply: Decodable {
+        struct FrameMark: Decodable { let path: [Int]?; let ref: String }
+        let tree: String, next: Int?, doc: String?, frames: [FrameMark], refs: [String]?, path: [Int]?
     }
 
     /// Where a frame's content starts in the top viewport (the page: zero): its iframe's content box, through every

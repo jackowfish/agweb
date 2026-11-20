@@ -11,18 +11,31 @@ public enum Output {
         titles.contains(String(title)) || title.hasPrefix("Request ") || title.hasPrefix("Static ")
     }
 
+    /// The lines of `text`, split on the newline byte: String's own split walks grapheme clusters, about 0.1 s for a
+    /// 165,000-line snapshot.
+    public static func lines(_ text: String) -> [Substring] {
+        text.utf8.split(separator: 10, omittingEmptySubsequences: false).map { Substring($0) }
+    }
+
     public static func sections(_ text: String) -> [(title: String, body: String)] {
-        var result: [(String, [Substring])] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.hasPrefix("### "), isTitle(line.dropFirst(4)) {
-                result.append((String(line.dropFirst(4)), []))
+        // Each section is a slice of `text` from its first line to its last: no array of lines, no join, no Foundation
+        // trim, which together took 0.1 s on a 165,000-line snapshot.
+        var result: [(title: String, start: String.Index, end: String.Index)] = []
+        for line in Output.lines(text) {
+            if line.utf8.first == UInt8(ascii: "#"), line.hasPrefix("### "), isTitle(line.dropFirst(4)) {
+                result.append((String(line.dropFirst(4)), line.endIndex, line.endIndex))
             } else if result.isEmpty {
-                result.append(("Result", [line]))
+                result.append(("Result", line.startIndex, line.endIndex))
             } else {
-                result[result.count - 1].1.append(line)
+                result[result.count - 1].end = line.endIndex
             }
         }
-        return result.map { ($0.0, $0.1.joined(separator: "\n").trimmingCharacters(in: .newlines)) }
+        return result.map { title, start, end in
+            var body = text[start..<end]
+            while body.first?.isNewline == true { body.removeFirst() }
+            while body.last?.isNewline == true { body.removeLast() }
+            return (title, String(body))
+        }
     }
 
     /// `text` prints at most this many bytes of its answer, so one page (a feed, a huge table) can't fill an agent's context.

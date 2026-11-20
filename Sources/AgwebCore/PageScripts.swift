@@ -313,7 +313,8 @@ public enum PageScripts {
     if (root) visit(root, 0); else walk(document.body || document.documentElement, 0);
     if (truncated) lines.push(`- (truncated at ${limit} lines; snapshot --filename saves all of them)`);
     if (root && !lines.length && (skip.has(root.tagName) || !root.checkVisibility({ visibilityProperty: true }))) lines.push('- (hidden on the page, so no tree; eval reads it)');
-    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames, refs: shown, path: framePath(window) });
+    // The refs only from a frame below the page (the app routes them to it): 150,000 of them would ride along for nothing.
+    return JSON.stringify({ tree: lines.join('\\n'), next: W.next, doc: W.doc, frames, refs: window === window.top ? undefined : shown, path: framePath(window) });
     """
 
     /// The frame's path in the frame tree (see `framePath`), to tell which cross-origin frame a handle is.
