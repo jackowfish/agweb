@@ -1,5 +1,7 @@
 # Benchmarks
 
+`scripts/bench.py` reruns the main cases against `scripts/bench-baseline.json` (see its header); run it before a release. The tables below are how the numbers were first found.
+
 Measured 2026-11-20 on Paul's Mac (macOS 27.2), in throwaway test instances (`scripts/build.sh --test`, own `AGWEB_ROOT`), nothing else running. Times are wall clock per CLI call, median of 3. CPU is the CPU time the whole tool used during the call; RAM is the peak resident memory of its whole process tree (agweb: the app and the WebKit processes macOS counts as its; Playwright: playwright-cli's daemon and Chrome). playwright-cli 0.1.11, headless.
 
 ## Snapshot and find on a huge page
