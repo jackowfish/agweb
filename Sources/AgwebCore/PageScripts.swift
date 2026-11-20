@@ -432,9 +432,10 @@ public enum PageScripts {
       const copy = (node) => {
         const out = inert.importNode(node, false);
         for (const child of rendered(node)) {
-          // A shadow tree's styles come along with it; a script stays only as math (MathJax's math/tex).
-          if (child.nodeType === 1 && (['svg', 'style'].includes(child.localName) || (child.localName === 'script' && !/math/i.test(child.type))
-            || getComputedStyle(child).display === 'none')) continue;
+          // A shadow tree's styles come along with it; a script stays only as math (MathJax's math/tex, display:none
+          // like every script).
+          const math = child.nodeType === 1 && child.localName === 'script' && /math/i.test(child.type);
+          if (child.nodeType === 1 && !math && (['svg', 'style', 'script'].includes(child.localName) || getComputedStyle(child).display === 'none')) continue;
           out.appendChild(copy(child));
         }
         return out;
@@ -456,11 +457,15 @@ public enum PageScripts {
     // A page that says it is an article: og:type or schema.org JSON-LD.
     const declared = document.querySelector('meta[property="og:type"]')?.content === 'article' ||
       [...document.querySelectorAll('script[type="application/ld+json"]')].some(s => /"@type"\\s*:\\s*\\[?\\s*"(\\w*Article|BlogPosting)"/.test(s.textContent));
+    // Sites Defuddle has its own reader for, which skips the slow scoring: the URL patterns of defuddle.js's
+    // ExtractorRegistry (0.13.3; keep them in step when updating it), less its catch-all.
+    const site = /(^|\\.)(x\\.com|twitter\\.com|reddit\\.com|youtube\\.com|youtu\\.be|bilibili\\.com|news\\.ycombinator\\.com|chatgpt\\.com|claude\\.ai|grok\\.com|gemini\\.google\\.com|mail\\.google\\.com|github\\.com|linkedin\\.com|threads\\.net|threads\\.com|bsky\\.app|medium\\.com|wiki\\.c2\\.com|substack\\.com|nytimes\\.com|wikipedia\\.org|leetcode\\.com|lwn\\.net)$/.test(location.hostname)
+      || /\\/@[^/]+\\/\\d+|\\/t\\/[^/]+\\/\\d+/.test(location.pathname);
     // Defuddle scores every element (shadow roots flattened in), 3.4 s on a 42,000-element feed whatever its options;
-    // a page that big comes back whole, unless it says it is an article.
-    const count = (root) => { let n = root.querySelectorAll('*').length; for (const el of root.querySelectorAll('*')) if (el.shadowRoot) n += count(el.shadowRoot); return n; };
-    const elements = count(document);
-    if (elements > 15000 && !declared) return reply(body(), true, 0, 0, elements);
+    // a page that big comes back whole, unless it says it is an article or has a site reader.
+    const count = (root) => { const all = root.querySelectorAll('*'); let n = all.length; for (const el of all) if (el.shadowRoot) n += count(el.shadowRoot); return n; };
+    const elements = declared || site ? 0 : count(document);
+    if (elements > 15000) return reply(body(), true, 0, 0, elements);
     const page = new Defuddle(document, { url: location.href }).parse();
     if (page.wordCount < 50) return reply(body(), true);
     // The article can leave out what a reader came for, such as a pricing page's plans: say how much it kept,
@@ -671,12 +676,23 @@ public enum PageScripts {
     // The page's text, then each shown open shadow root's (body.innerText leaves them out), then its same-origin
     // frames'. Only what is on screen: innerText of an element that isn't rendered is all its text, a <style>'s CSS
     // included, so hidden children, styles and hidden hosts are left out, as body.innerText leaves out hidden text.
-    const shown = (el) => el.checkVisibility({ visibilityProperty: true }) || getComputedStyle(el).display === 'contents';
+    // A display:contents box (every <slot>) has no box of its own: it shows when what holds it does.
+    const contents = (el) => getComputedStyle(el).display === 'contents';
+    const shown = (el) => el.checkVisibility({ visibilityProperty: true }) || (contents(el) && !!(el.parentElement || el.getRootNode().host)
+      && shown(el.parentElement || el.getRootNode().host));
+    // innerText of a box-less element is its raw textContent, so one is read through: a slot's assigned nodes or its
+    // fallback, a wrapper's children.
+    const textOf = (n) => {
+      if (n.nodeType === 3) return n.textContent;
+      if (n.nodeType !== 1 || ['STYLE', 'SCRIPT', 'TEMPLATE'].includes(n.tagName)) return '';
+      if (!contents(n)) return n.checkVisibility({ visibilityProperty: true }) ? n.innerText : '';
+      const assigned = n.tagName === 'SLOT' ? n.assignedNodes({ flatten: true }) : [];
+      return [...(assigned.length ? assigned : n.childNodes)].map(textOf).join(' ');
+    };
     const shadows = function* (root) {
       for (const el of root.querySelectorAll('*')) {
         if (!el.shadowRoot || !shown(el)) continue;
-        yield [...el.shadowRoot.childNodes].map(n => n.nodeType === 3 ? n.textContent
-          : n.nodeType === 1 && !['STYLE', 'SCRIPT', 'TEMPLATE'].includes(n.tagName) && shown(n) ? n.innerText : '').join(' ');
+        yield [...el.shadowRoot.childNodes].map(textOf).join(' ');
         yield* shadows(el.shadowRoot);
       }
     };
