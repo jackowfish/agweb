@@ -296,7 +296,8 @@ struct SidebarView: View {
             ForEach(model.workspaces) { workspace in
                 Section {
                     ForEach(workspace.tabs) { tab in
-                        TabRow(tab: tab, driven: tab.id == workspace.currentID) { model.onCloseTab?(tab) }
+                        // The person's own workspaces have no agent tab: none of theirs is dimmed.
+                        TabRow(tab: tab, driven: workspace.currentID == nil || tab.id == workspace.currentID, agent: workspace.currentID != nil) { model.onCloseTab?(tab) }
                             .tag(tab.id)
                             .contextMenu {
                                 Button("Close Tab") { model.onCloseTab?(tab) }
@@ -346,6 +347,7 @@ private struct WorkspaceHeader: View {
 private struct TabRow: View {
     let tab: Tab
     let driven: Bool
+    let agent: Bool
     let close: () -> Void
     @State private var hovering = false
 
@@ -356,7 +358,7 @@ private struct TabRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .foregroundStyle(driven ? .primary : .secondary)
-                .help(driven ? "The tab this workspace's agent drives" : "")
+                .help(driven && agent ? "The tab this workspace's agent drives" : "")
             Spacer(minLength: 0)
             if let asking = tab.asking {
                 Image(systemName: "hand.raised.fill").foregroundStyle(.orange).help("The agent asks you: \(asking)")

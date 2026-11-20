@@ -970,8 +970,8 @@ check "Page" -w eph1 eval "() => { sessionStorage.setItem('fresh', 'F') }"
 check "ad blocking off in workspace eph1" -w eph1 adblock off
 sleep 2
 check "dashboard shown" dashboard
-# Unused for longer than Settings' limit (7 days by default): the workspace closes, and in a used one the old tab
-# that isn't the agent's.
+# Unused for longer than Settings' limit (7 days of agweb running, by default): the workspace closes, and in a used one
+# the old tab that isn't the agent's.
 check "Page" -w aged open "$u?aged"
 check "Page" -w kept open "$u?keep1"
 check "keep2" -w kept tab-new "$u?keep2"
@@ -983,14 +983,15 @@ stopped
 import json, sys
 path = sys.argv[1]
 data = json.load(open(path))
-old = "2020-01-01T00:00:00Z"
-for w in data if isinstance(data, list) else data["workspaces"]:
+# Ages count agweb's running time, saved as `clock`; a use long before it is long unused.
+old = data.get("clock", 0) - 30 * 86400
+for w in data["workspaces"]:
     if w["name"] == "aged":
-        w["lastUsed"] = old
-        for t in w["tabs"]: t["lastUsed"] = old
+        w["usedClock"] = old
+        for t in w["tabs"]: t["usedClock"] = old
     if w["name"] == "kept":
         for t in w["tabs"]:
-            if "keep1" in t["url"]: t["lastUsed"] = old
+            if "keep1" in t["url"]: t["usedClock"] = old
 json.dump(data, open(path, "w"))
 AGE
 # goto as the first command of a run must still bring the profile's session cookies back, and a detour through

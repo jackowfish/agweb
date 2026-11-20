@@ -53,7 +53,9 @@ final class Workspace: Identifiable {
     var lastCommand: String?
     var lastCommandAt: Date?
     /// The newest use of the workspace or any tab in it (Tab.markUsed); saved, for `list`.
-    @ObservationIgnored var lastUsed = Date()
+    @ObservationIgnored var lastUsed = Date() { didSet { usedClock = RunningClock.now } }
+    /// RunningClock at that use: cleanup ages by the time agweb has run since, not by the calendar (Cleanup.swift).
+    @ObservationIgnored var usedClock = RunningClock.now
     @ObservationIgnored var acceptDialogs = false
     /// Where downloads nobody named go: the last command's `--download-dir`, by default its caller's `.agweb/`.
     @ObservationIgnored var downloadDir: URL?
@@ -526,6 +528,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     func cancelLoads() {
         loadGeneration += 1
         initialLoad = nil
+        // A display queued just before (a restored tab closed at launch) would load it in the detached view.
+        pendingURL = nil
     }
 
     func goto(_ url: URL) async throws {
@@ -625,7 +629,9 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     /// When an agent's command, or the person's display, click or key, last used the tab; saved, for `list`. A page's
     /// own timers and reloads don't count.
-    @ObservationIgnored var lastUsed = Date()
+    @ObservationIgnored var lastUsed = Date() { didSet { usedClock = RunningClock.now } }
+    /// RunningClock at that use, as for Workspace.usedClock.
+    @ObservationIgnored var usedClock = RunningClock.now
     @ObservationIgnored private var useSavedAt = Date.distantPast
 
     func markUsed() {

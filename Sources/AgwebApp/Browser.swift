@@ -116,7 +116,7 @@ final class Browser {
             return tab
         }
         // Opened by the page itself, not used: as fresh as the click on the opener that may have opened it.
-        tab.lastUsed = opener.lastUsed
+        (tab.lastUsed, tab.usedClock) = (opener.lastUsed, opener.usedClock)
         if NSApp.isActive, model.displayedTabID == opener.id {
             model.display(tab.id, used: false)
         }

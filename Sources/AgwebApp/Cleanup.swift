@@ -1,21 +1,33 @@
 import AppKit
 
+/// Seconds agweb has been running, carried across launches (SavedWorkspaces.clock) and stopped while the Mac sleeps:
+/// cleanup counts only that time, so a week with agweb quit, or a holiday, closes nothing.
+@MainActor enum RunningClock {
+    private static var base = 0.0
+    private static var since = ProcessInfo.processInfo.systemUptime
+    static var now: Double { base + ProcessInfo.processInfo.systemUptime - since }
+    static func start(from saved: Double) {
+        base = saved
+        since = ProcessInfo.processInfo.systemUptime
+    }
+}
+
 extension Browser {
-    /// Closes what nobody used for Settings.closeUnusedDays (0: never), at launch and then hourly: a workspace whose
-    /// last use is that old, and in the others any such tab but the agent's current one. Leaves alone a workspace
-    /// running a command, recording or asking the person, and the tab the person is looking at.
-    func closeUnused(now: Date = Date()) {
+    /// Closes what agweb has run for Settings.closeUnusedDays (0: never) without using: such a workspace, and in a
+    /// used one such a tab other than the agent's current one. Leaves alone the person's own workspaces (no agent
+    /// drives them), one running a command, recording or asking the person, and the tab the window shows.
+    func closeUnused() {
         let days = Settings.store.integer(forKey: Settings.closeUnusedDays)
         guard days > 0 else { return }
-        let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
-        let watched = NSApp.isActive ? model.displayedTabID : nil
-        for workspace in model.workspaces {
-            guard !workspace.busy, workspace.recorder == nil, !workspace.tabs.contains(where: { $0.asking != nil || $0.id == watched }) else { continue }
-            if workspace.lastUsed < cutoff {
+        let now = RunningClock.now, limit = Double(days) * 86_400
+        let shown = model.displayedTabID
+        for workspace in model.workspaces where workspace.currentID != nil {
+            guard !workspace.busy, workspace.recorder == nil, !workspace.tabs.contains(where: { $0.asking != nil }) else { continue }
+            if now - workspace.usedClock > limit, !workspace.tabs.contains(where: { $0.id == shown }) {
                 closeWorkspace(workspace)
                 continue
             }
-            for tab in workspace.tabs where tab.lastUsed < cutoff && tab.id != workspace.currentID { closeTab(tab) }
+            for tab in workspace.tabs where now - tab.usedClock > limit && tab.id != workspace.currentID && tab.id != shown { closeTab(tab) }
         }
     }
 

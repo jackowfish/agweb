@@ -3,7 +3,7 @@ import AgwebCore
 
 /// Workspaces and their tabs outlive the app: saved a second after anything changes and on quit, reopened at
 /// launch. A reopened tab loads when it is first shown or driven, so a relaunch doesn't load every page at once.
-/// `close` and `close-all` are what end a workspace for good.
+/// `close` and `close-all` end a workspace for good, and so does a long time unused (Cleanup.swift).
 struct SavedWorkspaces: Codable {
     struct Workspace: Codable {
         var name: String
@@ -14,6 +14,8 @@ struct SavedWorkspaces: Codable {
         var adBlockOff: Bool?
         /// Workspace.lastUsed; nil in files from before it was kept, read as the launch time.
         var lastUsed: Date?
+        /// Workspace.usedClock; nil in older files, read as now.
+        var usedClock: Double?
     }
 
     struct Tab: Codable {
@@ -22,6 +24,7 @@ struct SavedWorkspaces: Codable {
         /// sessionStorage by origin; 0600 like the rest, since it holds tokens.
         var session: [String: [String: String]]?
         var lastUsed: Date?
+        var usedClock: Double?
     }
 
     var workspaces: [Workspace]
@@ -29,6 +32,8 @@ struct SavedWorkspaces: Codable {
     var displayed: String?
     var displayedIndex: Int?
     var dashboard: Bool?
+    /// RunningClock when saved: it carries on from there at the next launch.
+    var clock: Double?
 }
 
 extension Browser {
@@ -54,11 +59,11 @@ extension Browser {
                 .init(name: workspace.name, profile: workspace.profile, current: workspace.tabs.firstIndex { $0.id == workspace.currentID },
                       tabs: workspace.tabs.map { .init(url: $0.currentURL, title: $0.currentTitle,
                                                        session: workspace.profile == nil || $0.session.isEmpty ? nil : $0.session,
-                                                       lastUsed: $0.lastUsed) },
-                      adBlockOff: workspace.adBlockOff ? true : nil, lastUsed: workspace.lastUsed)
+                                                       lastUsed: $0.lastUsed, usedClock: $0.usedClock) },
+                      adBlockOff: workspace.adBlockOff ? true : nil, lastUsed: workspace.lastUsed, usedClock: workspace.usedClock)
             },
             displayed: displayed?.workspace.name, displayedIndex: displayed.flatMap { tab in tab.workspace.tabs.firstIndex { $0 === tab } },
-            dashboard: model.dashboardOpen ? true : nil)
+            dashboard: model.dashboardOpen ? true : nil, clock: RunningClock.now)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(state) else { return }
@@ -72,6 +77,7 @@ extension Browser {
         guard let data = try? Data(contentsOf: Agweb.workspacesFile),
               case let decoder = { let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; return decoder }(),
               let state = try? decoder.decode(SavedWorkspaces.self, from: data) else { return }
+        RunningClock.start(from: state.clock ?? 0)
         for saved in state.workspaces where !model.workspaces.contains(where: { $0.name == saved.name }) {
             guard let workspace = try? existingOrNewWorkspace(named: saved.name, profile: saved.profile) else { continue }
             workspace.adBlockOff = saved.adBlockOff == true
@@ -83,8 +89,10 @@ extension Browser {
                 tab.url = savedTab.url
                 tab.title = savedTab.title
                 tab.lastUsed = savedTab.lastUsed ?? tab.lastUsed
+                tab.usedClock = savedTab.usedClock ?? RunningClock.now
             }
             workspace.lastUsed = saved.lastUsed ?? workspace.lastUsed
+            workspace.usedClock = saved.usedClock ?? RunningClock.now
             if let index = saved.current, workspace.tabs.indices.contains(index) { workspace.currentID = workspace.tabs[index].id }
         }
         if let name = state.displayed, let index = state.displayedIndex,

@@ -127,7 +127,7 @@ struct GeneralSettings: View {
                     Text("7 days").tag(7)
                     Text("Never").tag(0)
                 }
-                Text("Never one an agent is using, recording or asking you in, or the tab you are looking at.").font(.caption).foregroundStyle(.secondary)
+                Text("Counts only the time agweb runs. Never your own workspaces, one an agent is working, recording or asking you in, an agent's current tab, or the tab the window shows.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
