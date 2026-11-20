@@ -613,12 +613,17 @@ final class Browser {
         case "find":
             let query = try arg(0, "text")
             guard let max = Int(options["max-results"] ?? "20"), max > 0 else { throw Failure("--max-results is a number above 0") }
-            let tree = try await snapshotTree(tab, "").tree
-            guard let found = Snapshot.find(query, in: tree, max: max) else {
-                let cut = tree.contains("(truncated at \(PageScripts.maxSnapshotLines) lines")
-                throw Failure("nothing on the page matches \(query.debugDescription)" + (cut ? " in its first \(PageScripts.maxSnapshotLines) snapshot lines; snapshot --filename saves all of them to grep" : ""))
+            // The whole page, not the snapshot's first 2000 lines; --filename (the CLI writes the file) keeps every match.
+            let toFile = options["whole"] != nil
+            let tree = try await snapshotTree(tab, "", whole: true).tree
+            guard let found = Snapshot.find(query, in: tree, max: toFile ? .max : max) else {
+                throw Failure("nothing on the page matches \(query.debugDescription)")
             }
-            return describe(tab) + "\n### Found\n\(found.matches) line\(found.matches == 1 ? "" : "s") matching \(query.debugDescription)\n" + found.tree
+            var lines = found.tree.split(separator: "\n", omittingEmptySubsequences: false)
+            if !toFile, lines.count > PageScripts.maxSnapshotLines {
+                lines = lines.prefix(PageScripts.maxSnapshotLines) + ["- (cut at \(PageScripts.maxSnapshotLines) lines; find --filename saves every match)"]
+            }
+            return describe(tab) + "\n### Found\n\(found.matches) line\(found.matches == 1 ? "" : "s") matching \(query.debugDescription)\n" + lines.joined(separator: "\n")
         case "text":
             let all = options["all"] != nil
             let text = try await pageText(tab, target: args.first, all: all)
@@ -1127,11 +1132,12 @@ final class Browser {
         var handles: [[Int]: WKFrameInfo]?
         let snapshot = try await snapshotTree(tab, target, in: tab.frameRefs[target], handles: &handles, limit: whole ? 0 : PageScripts.maxSnapshotLines)
         if tab.refLabels.count > 20_000 { tab.refLabels.removeAll() }
-        // Role and name only: a value may be what the agent typed. Anchored, so page text quoting "[ref=e3]" can't claim e3.
-        for line in snapshot.tree.split(separator: "\n") {
-            guard let match = line.firstMatch(of: #/^ *- ([a-z-]+(?: "(?:[^"\\]|\\.)*")?)(?: \[(?:[a-z]+(?:=\d+)?|value=(?:<hidden>|"(?:[^"\\]|\\.)*"))\])* \[ref=(e\d+)\]/#) else { continue }
-            // Hidden before it is cut, or a secret across the cut would show its first half.
-            tab.refLabels[String(match.2)] = String(Self.hide(secrets, in: String(match.1)).prefix(80))
+        // Role and name only: a value may be what the agent typed. Secrets are hidden before a label is cut, or a secret
+        // across the cut would show its first half; once for the whole tree, as hide is slow per line.
+        let tree = secrets.isEmpty ? snapshot.tree : Self.hide(secrets, in: snapshot.tree)
+        for line in tree.split(separator: "\n") {
+            guard let (label, ref) = Snapshot.refLabel(line) else { continue }
+            tab.refLabels[String(ref)] = String(label.prefix(80))
         }
         return snapshot
     }

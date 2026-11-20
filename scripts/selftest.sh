@@ -232,7 +232,11 @@ check "$dir/many.md" -w lst snapshot --filename="$dir/many.md"
 grep -q 'link "Link 2500"' "$dir/many.md" || fail "snapshot --filename did not save every line"
 ! grep -q 'truncated at' "$dir/many.md" || fail "snapshot --filename was cut"
 check "truncated at 2000 lines" -w lst snapshot
-fails "in its first 2000 snapshot lines; snapshot --filename saves all of them to grep" -w lst find "Link 2400"
+# find searches the whole page, past the snapshot's cap.
+check 'link "Link 2400" \[ref=' -w lst find "Link 2400"
+check "cut at 2000 lines; find --filename saves every match" -w lst find "Link" --max-results=1500
+check "$dir/found.md" -w lst find "Link" --filename="$dir/found.md"
+grep -q '^2500 lines matching' "$dir/found.md" && grep -q 'link "Link 2500"' "$dir/found.md" || fail "find --filename did not save every match"
 check "closed" -w lst close
 grep -q 'Press me' "$dir/page.md" || fail "text --filename did not write the page"
 check "Page" -w alpha eval "() => { const d = document.createElement('div'); d.id = 'veiled'; d.hidden = true; d.textContent = 'Hidden waiting state'; document.body.append(d) }"
@@ -319,6 +323,12 @@ check "Page" -w ev eval "() => { const h = document.createElement('div'); docume
 check "Page" -w ev wait 'role=button[name="Nested knob"]'
 check '^Shadow knob$' -w ev --raw eval '(el) => el.textContent' 'role=button[name="Shadow knob"]'
 check '^Nested knob$' -w ev --raw eval '(el) => el.textContent' 'role=button[name="Nested knob"]'
+# CSS reaches into open shadow roots and frames too, when the page itself has no match (rapi-doc's API pages).
+check "Page" -w ev eval "() => { const h = document.createElement('div'); document.body.append(h); h.attachShadow({ mode: 'open' }).innerHTML = '<section id=op><h2>GET /op</h2><input data-pname=\\'ident\\'><button>TRY</button></section>' }"
+check 'button "TRY" \[ref=' -w ev snapshot '#op'
+check 'button "TRY" \[ref=' -w ev find "GET /op"
+check "Page" -w ev fill 'input[data-pname="ident"]' 42
+check '^42$' -w ev --raw eval '(el) => el.value' 'input[data-pname="ident"]'
 # A name longer than 120 characters ends in …, and the cut name still finds its element.
 check "Page" -w ev eval "() => { const b = document.createElement('button'); b.textContent = 'Long word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word'; document.body.append(b); }"
 check 'button "Long word word word word word word word word word word word word word word word word word word word word word word word…"' -w ev snapshot

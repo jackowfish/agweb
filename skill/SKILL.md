@@ -33,7 +33,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 
 ## Targets
 
-`e12` from the last snapshot; `role=button[name="Save"]` (name is a case-insensitive substring); `text=Save` (substring) or `text="Save"` (exact); a CSS selector. Role and text targets must match exactly one visible element; the error lists the matches with their refs. Append `>> nth=0` (or `nth=-1` for the last) to pick one of several. Open shadow roots and same-origin frames are searched.
+`e12` from the last snapshot; `role=button[name="Save"]` (name is a case-insensitive substring); `text=Save` (substring) or `text="Save"` (exact); a CSS selector. Role and text targets must match exactly one visible element; the error lists the matches with their refs. Append `>> nth=0` (or `nth=-1` for the last) to pick one of several. Open shadow roots and same-origin frames are searched; CSS looks there only when the page itself has no match, and a selector can't cross into a shadow root (target the input, not `host input`).
 
 ## Patterns
 
@@ -87,7 +87,7 @@ agweb -w t --raw eval "[...document.querySelectorAll('table tr')].map(r => [...r
 agweb -w t --raw eval "[...document.querySelectorAll('article')].map(a => ({title: a.querySelector('h2')?.innerText, url: a.querySelector('a')?.href}))" # records as JSON: each field read inside its row, so a missing one can't shift the others
 agweb -w t --raw eval "(el) => el.value" e5 # what a snapshot hides: values, attributes, computed style
 agweb -w t --json eval "document.title" # {ok, result, page} for scripts
-agweb -w t find "Invoice" # just the lines holding the text, with refs and the lines above them
+agweb -w t find "Invoice" # the whole page's lines holding the text, with refs, the lines above them and up to 10 after; --filename saves every match
 ```
 
 `--raw` prints just the answer; Events and notes go to stderr. A snapshot prints at most 2000 lines and `text` 50 KB: `--filename=page.md` saves all of either, to grep or read in parts. `text` shortens images inlined as base64 to `![alt](<data:image/png… 4 KB cut>)`: to see one, `screenshot` its ref. `js` is `eval`, for sandboxes that refuse the word.

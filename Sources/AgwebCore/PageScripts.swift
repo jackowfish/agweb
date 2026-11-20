@@ -80,6 +80,18 @@ public enum PageScripts {
         if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') { let doc = null; try { doc = el.contentDocument; } catch {} if (doc) yield* all(doc); }
       }
     };
+    // A CSS selector's matches in the page; only when there are none, in every open shadow root and same-origin frame,
+    // as Playwright's CSS reaches into them. A selector stays within one root: target the input, not `host input`.
+    const css = (selector) => {
+      const found = [...document.querySelectorAll(selector)];
+      if (found.length) return found;
+      for (const el of all(document)) {
+        let root = el.shadowRoot;
+        if (!root && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) { try { root = el.contentDocument; } catch {} }
+        if (root) found.push(...root.querySelectorAll(selector));
+      }
+      return found;
+    };
     // Every visible element a role= or text= target matches.
     const matchesOf = (target) => {
       if (target.startsWith('role=')) {
@@ -126,7 +138,7 @@ public enum PageScripts {
     const find = (target) => {
       const nth = /^(.*?)\\s*>>\\s*nth=(-?\\d+)$/.exec(target);
       if (!nth) return findOne(target);
-      const els = /^(role|text)=/.test(nth[1]) ? matchesOf(nth[1]) : [...document.querySelectorAll(nth[1])];
+      const els = /^(role|text)=/.test(nth[1]) ? matchesOf(nth[1]) : css(nth[1]);
       const el = els.at(Number(nth[2]));
       if (!el) throw new Error(`no visible element matches ${target}: ${nth[1]} matches ${els.length}`);
       return el;
@@ -140,9 +152,9 @@ public enum PageScripts {
       }
       if (!/^(role|text)=/.test(target)) {
         // The first one a person can see: a page often keeps a hidden copy first (a collapsed quick-login form).
-        const els = document.querySelectorAll(target);
+        const els = css(target);
         if (!els.length) throw new Error(`no element matches ${target}` + urlHint(target));
-        return [...els].find(visible) ?? els[0];
+        return els.find(visible) ?? els[0];
       }
       const matches = matchesOf(target);
       if (matches.length === 0) {

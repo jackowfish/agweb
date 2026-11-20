@@ -60,15 +60,94 @@ public enum Snapshot {
         return out.joined(separator: "\n")
     }
 
-    /// The lines containing `query` (any case) and the lines enclosing them, as a pruned tree; nil when none match.
-    public static func find(_ query: String, in tree: String, max: Int) -> (tree: String, matches: Int)? {
+    /// The role and name a snapshot line gives its ref ("button \"Save\"", "e12"); nil for a line without a ref.
+    /// Quoted names and values are skipped whole, so page text quoting "[ref=e3]" can't claim e3. A scanner, not a
+    /// Regex: a 50,000-line snapshot took 9 s through Swift's Regex.
+    public static func refLabel(_ line: Substring) -> (label: Substring, ref: Substring)? {
+        let bytes = line.utf8
+        var i = bytes.startIndex
+        func at(_ text: String) -> Bool {
+            var k = i
+            for byte in text.utf8 {
+                guard k < bytes.endIndex, bytes[k] == byte else { return false }
+                k = bytes.index(after: k)
+            }
+            i = k
+            return true
+        }
+        func lower(_ byte: UInt8) -> Bool { (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte) }
+        func digits() -> Bool {
+            let start = i
+            while i < bytes.endIndex, (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(bytes[i]) { i = bytes.index(after: i) }
+            return i > start
+        }
+        // A JSON string from its opening quote, escapes included.
+        func quoted() -> Bool {
+            guard at("\"") else { return false }
+            while i < bytes.endIndex {
+                let byte = bytes[i]
+                i = bytes.index(after: i)
+                if byte == UInt8(ascii: "\\") {
+                    guard i < bytes.endIndex else { return false }
+                    i = bytes.index(after: i)
+                } else if byte == UInt8(ascii: "\"") {
+                    return true
+                }
+            }
+            return false
+        }
+        while i < bytes.endIndex, bytes[i] == UInt8(ascii: " ") { i = bytes.index(after: i) }
+        guard at("- ") else { return nil }
+        let start = i
+        while i < bytes.endIndex, lower(bytes[i]) || bytes[i] == UInt8(ascii: "-") { i = bytes.index(after: i) }
+        guard i > start else { return nil }
+        var end = i
+        let afterRole = i
+        if !(at(" ") && quoted()) { i = afterRole } else { end = i }
+        while at(" [") {
+            if at("ref=e") {
+                let ref = bytes.index(i, offsetBy: -1)
+                guard digits() else { return nil }
+                let refEnd = i
+                guard at("]") else { return nil }
+                return (Substring(line[start..<end]), Substring(line[ref..<refEnd]))
+            }
+            if at("value=") {
+                guard at("<hidden>") || quoted() else { return nil }
+            } else {
+                let name = i
+                while i < bytes.endIndex, lower(bytes[i]) { i = bytes.index(after: i) }
+                guard i > name else { return nil }
+                if at("=") { guard digits() else { return nil } }
+            }
+            guard at("]") else { return nil }
+        }
+        return nil
+    }
+
+    /// The lines containing `query` (any case) as a pruned tree: each with the lines enclosing it and up to `after`
+    /// lines that follow it in the same container (a heading's form fields and buttons); nil when none match.
+    public static func find(_ query: String, in tree: String, max: Int, after: Int = 10) -> (tree: String, matches: Int)? {
         let lines = tree.split(separator: "\n", omittingEmptySubsequences: false)
         let matching = lines.indices.filter { lines[$0].range(of: query, options: .caseInsensitive) != nil }
         guard !matching.isEmpty else { return nil }
-        var keep = Set<Int>()
-        for index in matching.prefix(max) {
-            keep.formUnion(ancestors(of: depth(lines[index]), before: index, in: lines))
+        let shown = matching.prefix(max), wanted = Set(shown)
+        // One pass with the chain of enclosing lines: walking back from each match took 39 s for 1500 matches.
+        var keep = Set<Int>(), chain: [(depth: Int, index: Int)] = []
+        for index in lines.indices where index <= shown.last! {
+            let level = depth(lines[index])
+            while let last = chain.last, last.depth >= level { chain.removeLast() }
+            if wanted.contains(index) { keep.formUnion(chain.map(\.index)) }
+            chain.append((level, index))
+        }
+        for index in shown {
+            let level = depth(lines[index])
             keep.insert(index)
+            var k = index + 1
+            while k < lines.count, k - index <= after, depth(lines[k]) >= level {
+                keep.insert(k)
+                k += 1
+            }
         }
         var out = keep.sorted().map { String(lines[$0]) }
         if matching.count > max { out.append("- (\(matching.count - max) more; --max-results to see them)") }

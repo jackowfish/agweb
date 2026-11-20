@@ -18,7 +18,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 (the 10 around the current one; --max-results=N for more)
   snapshot [target]             page (or one element) as a tree with [ref=eN] handles; iframes included
                                 (--diff: only what changed since the last snapshot; an element keeps its ref)
-  find <text>                   the snapshot lines containing text, with the lines around them (--max-results=20)
+  find <text>                   the whole page's snapshot lines containing text, each with the lines above it and up to
+                                10 after it in its container (--max-results=20; --filename saves every match)
   text [target]                 the page's main content (an article) or one element as markdown (--all: the whole page)
   click <target> [right|middle] native trusted click: the pointer glides there like a person's (--js: element.click());
                                 fails if something covers the target, such as a cookie dialog (--force: click anyway)
@@ -103,7 +104,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
 --instant                       pointer verbs, scrolling, upload and type act at once instead of at human speed
 --timeout=MS                    actions wait this long for their target to show (default 5000) and for anything covering it
                                 to go (default 1000); 0: don't wait; wait: 30000
---filename=PATH                 snapshot, text, eval, request and response-body: write the answer to a file instead
+--filename=PATH                 snapshot, find, text, eval, request and response-body: write the answer to a file instead
 --download-dir=DIR              where downloads nobody named go (default $AGWEB_DOWNLOAD_DIR, else .agweb/)
 --raw                           print only the answer (eval's value, a snapshot), strings unquoted; events and notes go to stderr
 --json                          print the reply as one JSON object
@@ -309,8 +310,8 @@ case "state-load":
     guard let data = FileManager.default.contents(atPath: file) else { fail("cannot read \(file)") }
     args = [String(decoding: data, as: UTF8.self)]
     writeAnswerTo = nil
-case "snapshot" where writeAnswerTo != nil:
-    // A file takes every line; the 2000-line cap is for what an agent reads.
+case "snapshot" where writeAnswerTo != nil, "find" where writeAnswerTo != nil:
+    // A file takes every line (and every match); the 2000-line cap is for what an agent reads.
     options["whole"] = ""
 case "open", "goto", "tab-new":
     // A local file wins over a same-named host, the way a shell user would expect.
