@@ -775,20 +775,14 @@ final class Browser {
             let path = try options["filename"] ?? { throw Failure("missing --filename") }()
             let image = try await screenshot(tab, target: args.first, fullPage: options["full-page"] != nil)
             let jpeg = ["jpg", "jpeg"].contains(URL(fileURLWithPath: path).pathExtension.lowercased())
-            // Straight from the CGImage: through a TIFF and an NSBitmapImageRep, a full page's PNG took most of its 0.9 s.
-            let data = NSMutableData()
-            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let destination = CGImageDestinationCreateWithData(data, (jpeg ? UTType.jpeg : UTType.png).identifier as CFString, 1, nil) else {
-                throw Failure("could not encode screenshot")
-            }
+            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw Failure("could not encode screenshot") }
             // Tagged at the screen's density, as NSImage's TIFF was: at 72 dpi a Retina shot opens twice its size.
             let dpi = 72 * Double(cgImage.width) / max(1, image.size.width)
-            var properties: [CFString: Any] = [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi]
-            if jpeg { properties[kCGImageDestinationLossyCompressionQuality] = 0.85 }
-            CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
-            guard CGImageDestinationFinalize(destination) else { throw Failure("could not encode screenshot") }
+            // Off the main thread: a full page's PNG takes about half a second, and every workspace's commands wait
+            // on the main thread meanwhile.
+            let data = try await Task.detached(priority: .userInitiated) { try Self.encode(cgImage, jpeg: jpeg, dpi: dpi) }.value
             try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
-            try (data as Data).write(to: URL(fileURLWithPath: path))
+            try data.write(to: URL(fileURLWithPath: path))
             var note: String?
             if args.isEmpty, options["full-page"] == nil,
                let below = Int(try await tab.call("return String(document.documentElement.scrollHeight - scrollY - innerHeight)", world: .page)), below > 0 {
@@ -933,6 +927,19 @@ final class Browser {
         for _ in 0..<1200 where tab.downloadsEnded.count == ended { try await Task.sleep(for: .milliseconds(100)) }
         guard let result = tab.downloadsEnded.dropFirst(ended).first else { throw Failure("the download did not finish within 2 minutes") }
         return try result.get()
+    }
+
+    /// PNG, or JPEG at 0.85, straight from the CGImage: through a TIFF and an NSBitmapImageRep took most of the time.
+    nonisolated private static func encode(_ image: CGImage, jpeg: Bool, dpi: Double) throws -> Data {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, (jpeg ? UTType.jpeg : UTType.png).identifier as CFString, 1, nil) else {
+            throw Failure("could not encode screenshot")
+        }
+        var properties: [CFString: Any] = [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi]
+        if jpeg { properties[kCGImageDestinationLossyCompressionQuality] = 0.85 }
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw Failure("could not encode screenshot") }
+        return data as Data
     }
 
     private func screenshot(_ tab: Tab, target: String?, fullPage: Bool) async throws -> NSImage {
