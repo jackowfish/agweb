@@ -124,10 +124,12 @@ struct GeneralSettings: View {
             Section("Workspaces") {
                 Picker("Close unused workspaces and tabs after", selection: $closeUnused) {
                     Text("1 day").tag(1)
+                    Text("3 days").tag(3)
                     Text("7 days").tag(7)
+                    Text("30 days").tag(30)
                     Text("Never").tag(0)
                 }
-                Text("Counts only the time agweb runs. Never your own workspaces, one an agent is working, recording or asking you in, an agent's current tab, or the tab the window shows.").font(.caption).foregroundStyle(.secondary)
+                Text("Only time agweb is running counts. Your own workspaces and what an agent is working on stay.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

@@ -14,14 +14,15 @@ import AppKit
 
 extension Browser {
     /// Closes what agweb has run for Settings.closeUnusedDays (0: never) without using: such a workspace, and in a
-    /// used one such a tab other than the agent's current one. Leaves alone the person's own workspaces (no agent
-    /// drives them), one running a command, recording or asking the person, and the tab the window shows.
+    /// used one such a tab other than the agent's current one. Leaves alone the person's own workspaces with tabs (no
+    /// agent drives them), one running a command, recording or asking the person, and the tab the window shows.
     func closeUnused() {
         let days = Settings.store.integer(forKey: Settings.closeUnusedDays)
         guard days > 0 else { return }
         let now = RunningClock.now, limit = Double(days) * 86_400
         let shown = model.displayedTabID
-        for workspace in model.workspaces where workspace.currentID != nil {
+        // No current tab: the person's own workspace, or an agent's whose last tab closed, which may go once old.
+        for workspace in model.workspaces where workspace.currentID != nil || workspace.tabs.isEmpty {
             guard !workspace.busy, workspace.recorder == nil, !workspace.tabs.contains(where: { $0.asking != nil }) else { continue }
             if now - workspace.usedClock > limit, !workspace.tabs.contains(where: { $0.id == shown }) {
                 closeWorkspace(workspace)

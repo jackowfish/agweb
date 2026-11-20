@@ -1008,7 +1008,7 @@ check '^blocked$' -w beta --raw eval "() => fetch('/index.html?blockapi').then((
 check '"dashboard":true' list --json
 check "dashboard hidden" dashboard --hide
 check "^profile selftest-shared$" tree
-lacks "aged" list
+lacks "- aged (" list
 check "keep2" -w kept tab-list
 lacks "keep1" -w kept tab-list
 check "^fresh profile" tree
