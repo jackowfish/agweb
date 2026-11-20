@@ -58,7 +58,7 @@ macOS naps agweb in the background, which stretches every timer a command waits 
 
 ## Other commands
 
-Measured by a Fable agent on ec9b605's code before the final App Nap fix, `AGWEB_INSTANT=1`, median of 3; "54k" is a page of 54,000 elements (1.9 MB of HTML). Each time includes about 0.04 s of harness.
+Measured by a Fable agent on 06887a1's code, before the final App Nap fix and the fixes below, `AGWEB_INSTANT=1`, median of 3; "54k" is a page of 54,000 elements (1.9 MB of HTML). Each time includes about 0.04 s of harness.
 
 | Command | Page | Time |
 |---|---|---|
@@ -86,3 +86,15 @@ Measured by a Fable agent on ec9b605's code before the final App Nap fix, `AGWEB
 | `dashboard --filename` | 63 tabs | 2.18 s |
 
 Causes found: `role=…[name=…]` read `el.labels` for every candidate, which scans the document each time, and an action resolves its target about three times; `text` spends about 2.6 s in Defuddle's parse on a huge DOM; `pdf` is WebKit's print view drawing on the main thread; `screenshot --full-page` encodes PNG through a TIFF round trip; `dashboard --filename` sleeps a fixed 2 s.
+
+## After the fixes for those (95d597c)
+
+A page of 6000 rows, each an input with a placeholder, a button, a checkbox and five spans (54,000 elements), plus one `<label for>`; `AGWEB_INSTANT=1`, median of 3.
+
+| Command | before | after |
+|---|---|---|
+| `click role=textbox[name="field 5999"]` | 8.52 s | 0.29 s |
+| `hover role=button[name="Button 5999"]` | 6.07 s | 0.13 s |
+| `wait role=textbox[name="Labelled"]` | 2.04 s | 0.06 s |
+| `screenshot --full-page` png / jpg (2160×32768 px) | 1.21 / 0.75 s | 1.08 / 0.55 s |
+| `dashboard --filename`, 6 tabs | 2.16 s | 0.47 s |

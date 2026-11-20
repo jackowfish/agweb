@@ -129,12 +129,15 @@ public enum Snapshot {
     /// lines that follow it in the same container (a heading's form fields and buttons); nil when none match.
     public static func find(_ query: String, in tree: String, max: Int, after: Int = 10) -> (tree: String, matches: Int)? {
         let lines = Output.lines(tree)
-        // Lowercased once and searched with the standard library: Foundation's case-insensitive range(of:) per line took
-        // 0.8 s over 165,000 lines. Lowercasing keeps every line break, so the line numbers agree.
-        let needle = query.lowercased()
-        let lowered = Output.lines(tree.lowercased())
-        let matching = lowered.count == lines.count ? lowered.indices.filter { lowered[$0].contains(needle) }
-            : lines.indices.filter { lines[$0].range(of: query, options: .caseInsensitive) != nil }
+        // ASCII query, ASCII line: the tree lowercased once and searched with the standard library, where Foundation's
+        // case-insensitive range(of:) on every line took 0.8 s over 165,000 lines (lowercasing keeps every line break, so
+        // the line numbers agree). Anything else keeps Foundation's full case folding: strasse finds Straße, οδος ΟΔΟΣ.
+        let ascii = query.allSatisfy(\.isASCII), needle = query.lowercased()
+        let lowered = ascii ? Output.lines(tree.lowercased()) : []
+        let matching = lines.indices.filter { index in
+            ascii && lines[index].utf8.allSatisfy({ $0 < 128 }) ? lowered[index].contains(needle)
+                : lines[index].range(of: query, options: .caseInsensitive) != nil
+        }
         guard !matching.isEmpty else { return nil }
         let shown = matching.prefix(Swift.max(max, 1)), wanted = Set(shown)
         // One pass with the chain of enclosing lines: walking back from each match took 39 s for 1500 matches.

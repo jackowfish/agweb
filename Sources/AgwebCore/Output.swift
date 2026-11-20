@@ -44,7 +44,9 @@ public enum Output {
     /// A page's `### History` or `### Request body` would read as a reply section and end the answer there; one level
     /// down it stays content.
     public static func demoteTitles(_ markdown: String) -> String {
-        markdown.split(separator: "\n", omittingEmptySubsequences: false)
+        // The same lines `sections` reads: split by Character, "\r\n" is one character, so a page's "x\r\n### Page"
+        // stayed undemoted and then read as a section.
+        lines(markdown)
             .map { $0.hasPrefix("### ") && isTitle($0.dropFirst(4)) ? "#" + $0 : $0 }.joined(separator: "\n")
     }
 

@@ -97,3 +97,11 @@ private let page = """
     #expect(label("- option \"One\" [selected]") == nil)
     #expect(label("- button \"unterminated [ref=e3]") == nil)
 }
+
+@Test func findFoldsCaseBeyondASCII() throws {
+    let tree = "- heading \"Straße\" [ref=e1]\n- heading \"ΟΔΟΣ\" [ref=e2]\n- link \"File\" [ref=e3]"
+    #expect(try #require(Snapshot.find("STRASSE", in: tree, max: 20)).tree.contains("e1"))
+    #expect(try #require(Snapshot.find("strasse", in: tree, max: 20)).tree.contains("e1"))
+    #expect(try #require(Snapshot.find("οδος", in: tree, max: 20)).tree.contains("e2"))
+    #expect(try #require(Snapshot.find("file", in: tree, max: 20)).tree.contains("e3"))
+}

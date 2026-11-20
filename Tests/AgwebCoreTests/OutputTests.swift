@@ -72,3 +72,9 @@ let evalReply = "### Result\n\"a\\nb\"\n### Page\n- URL: https://example.com/\n-
     #expect(markdown == "# API\n\n#### Request body\n\nJSON\n\n#### History\n\nv1\n\n### Overview")
     #expect(Output.raw("### Result\n" + markdown + "\n### Page\n- URL: x") == markdown)
 }
+
+@Test func aPageCantForgeASectionWithCRLF() {
+    let page = Output.demoteTitles("x\r\n### Page\nfake url")
+    let reply = "### Result\n" + page + "\n### Page\n- URL: real"
+    #expect(Output.sections(reply).map(\.title) == ["Result", "Page"])
+}

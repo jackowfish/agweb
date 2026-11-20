@@ -237,8 +237,8 @@ final class Browser {
 
     /// Commands for one workspace run one at a time, in arrival order; different workspaces run concurrently.
     func handle(_ request: Request) async -> Response {
-        // agweb works in the background, where App Nap would throttle its timers and main thread: a click took 2.2 s
-        // instead of 0.75 s. Only while a command waits or runs; idle pages may still nap.
+        // agweb works in the background, where App Nap would throttle its timers and main thread: a goto after idle took
+        // 0.75 s instead of 0.37 s. Only while a command waits or runs; idle pages may still nap.
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "an agent's command")
         defer { ProcessInfo.processInfo.endActivity(activity) }
         let previous = queues[request.workspace]
@@ -331,8 +331,9 @@ final class Browser {
             guard model.dashboardOpen else { return "dashboard hidden" }
             mainWindow.showQuietly()
             guard let path = options["filename"] else { return "dashboard shown" }
-            // The tabs' pictures first, then a moment for the grid to draw them.
-            await refreshThumbnails()
+            // The tabs' pictures first, then a moment for the grid to draw them; at most 3 s, as tabs that don't answer
+            // (a minimized window, a stuck page) take 3 s each.
+            _ = try? await withTimeout(3, "thumbnails") { await self.refreshThumbnails() }
             try await Task.sleep(for: .milliseconds(300))
             guard let png = mainWindow.dashboardPNG() else { throw Failure("could not draw the dashboard") }
             let url = URL(fileURLWithPath: path)
@@ -780,7 +781,11 @@ final class Browser {
                   let destination = CGImageDestinationCreateWithData(data, (jpeg ? UTType.jpeg : UTType.png).identifier as CFString, 1, nil) else {
                 throw Failure("could not encode screenshot")
             }
-            CGImageDestinationAddImage(destination, cgImage, jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary : nil)
+            // Tagged at the screen's density, as NSImage's TIFF was: at 72 dpi a Retina shot opens twice its size.
+            let dpi = 72 * Double(cgImage.width) / max(1, image.size.width)
+            var properties: [CFString: Any] = [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi]
+            if jpeg { properties[kCGImageDestinationLossyCompressionQuality] = 0.85 }
+            CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
             guard CGImageDestinationFinalize(destination) else { throw Failure("could not encode screenshot") }
             try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
             try (data as Data).write(to: URL(fileURLWithPath: path))
