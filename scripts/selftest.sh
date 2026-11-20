@@ -970,10 +970,29 @@ check "Page" -w eph1 eval "() => { sessionStorage.setItem('fresh', 'F') }"
 check "ad blocking off in workspace eph1" -w eph1 adblock off
 sleep 2
 check "dashboard shown" dashboard
+# Unused for longer than Settings' limit (7 days by default): the workspace closes, and in a used one the old tab
+# that isn't the agent's.
+check "Page" -w aged open "$u?aged"
+check "Page" -w kept open "$u?keep1"
+check "keep2" -w kept tab-new "$u?keep2"
 check "recording" -w beta video-start "$dir/quit.mp4"
 check "quit.mp4" quit
 LC_ALL=C grep -qa moov "$dir/quit.mp4" || fail "quit left the video without its index"
 stopped
+/usr/bin/python3 - "$AGWEB_ROOT/workspaces.json" <<'AGE'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+old = "2020-01-01T00:00:00Z"
+for w in data if isinstance(data, list) else data["workspaces"]:
+    if w["name"] == "aged":
+        w["lastUsed"] = old
+        for t in w["tabs"]: t["lastUsed"] = old
+    if w["name"] == "kept":
+        for t in w["tabs"]:
+            if "keep1" in t["url"]: t["lastUsed"] = old
+json.dump(data, open(path, "w"))
+AGE
 # goto as the first command of a run must still bring the profile's session cookies back, and a detour through
 # another origin first (an SSO bounce) must not use up the first origin's sessionStorage.
 check "index.html?first" -w beta goto "http://localhost:$port/index.html?first"
@@ -988,6 +1007,9 @@ check '^blocked$' -w beta --raw eval "() => fetch('/index.html?blockapi').then((
 check '"dashboard":true' list --json
 check "dashboard hidden" dashboard --hide
 check "^profile selftest-shared$" tree
+lacks "aged" list
+check "keep2" -w kept tab-list
+lacks "keep1" -w kept tab-list
 check "^fresh profile" tree
 check "index.html?again" -w beta tab-list
 check 'button "Press me"' -w beta snapshot

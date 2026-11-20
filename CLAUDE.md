@@ -22,6 +22,7 @@ Agent actions never activate the app, raise or focus its window, or pop anything
   - `Model.swift`: workspaces, tabs and named profiles (session cookies, locks).
   - `Visibility.swift`: which tabs WebKit sees; turns off the secure input WebKit leaves on in the background.
   - `SavedWorkspaces.swift`: saves and reopens workspaces, tabs, their sessionStorage and when each was last used.
+  - `Cleanup.swift`: closes workspaces and tabs unused for Settings' days (7 by default), at launch and hourly.
   - `Dashboard.swift`: the ⌘D grid.
   - `AdBlock.swift`: fetches uBlock Origin's lists every 4 days and puts the compiled rules on every content controller (off for the instance in Settings, for one workspace with `agweb -w NAME adblock off`).
   - `Input.swift`: synthesizes native events.

@@ -16,7 +16,7 @@ agweb -w fix-login snapshot # page tree with [ref=eN] handles
 agweb -w fix-login click e12 # act; the reply lists what changed under ### Changes
 agweb -w fix-login snapshot --diff # after goto or eval, or when the page changed by itself
 agweb -w fix-login goto https://app.example.com/x # navigate; never eval "location.href=...", which tells you nothing
-agweb -w fix-login close # when done; otherwise the workspace reopens after a restart
+agweb -w fix-login close # when done; otherwise the workspace reopens after a restart, until 7 days unused close it
 ```
 
 - Name the workspace uniquely (a ticket, branch or PR id, else `task-7f3a`); a name in `agweb list` is someone else's. Never touch a workspace you didn't open: "clean up" means `close` yours (`tab-close` for one tab).

@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let label = Agweb.label { NSApp.dockTile.badgeLabel = label }
         browser.restoreWorkspaces()
+        browser.scheduleCloseUnused()
         do {
             try serve(path: path) { request in await browser.handle(request) }
         } catch {

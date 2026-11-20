@@ -9,7 +9,7 @@ enum Settings {
     /// never changes or deletes the person's.
     static let store: UserDefaults = {
         let store = Agweb.isDefaultRoot ? .standard : UserDefaults(suiteName: Agweb.settingsSuite(root: Agweb.root))!
-        store.register(defaults: [showUsage: true, adBlock: true, passkeys: true])
+        store.register(defaults: [showUsage: true, adBlock: true, passkeys: true, closeUnusedDays: 7])
         return store
     }()
     static let showUsage = "dashboardShowsUsage"
@@ -18,6 +18,8 @@ enum Settings {
     static let textSize = "textSize"
     static let adBlock = "blockAds"
     static let passkeys = "agwebPasskeys"
+    /// Workspaces and tabs unused this many days close by themselves (Cleanup.swift); 0 never.
+    static let closeUnusedDays = "closeUnusedDays"
 }
 
 /// The sidebar's and the dashboard's text; pages have their own zoom (⌘+, ⌘−).
@@ -103,6 +105,7 @@ struct PasskeySettings: View {
 
 /// The command line tool and the agent skill.
 struct GeneralSettings: View {
+    @AppStorage(Settings.closeUnusedDays, store: Settings.store) private var closeUnused = 7
     @State private var skill: [String] = []
     @State private var cli = ""
 
@@ -117,6 +120,14 @@ struct GeneralSettings: View {
             Section("Agent skill") {
                 ForEach(skill, id: \.self) { Text($0) }
                 Button("Install for Claude Code and Codex") { skill = SkillInstaller.install() }
+            }
+            Section("Workspaces") {
+                Picker("Close unused workspaces and tabs after", selection: $closeUnused) {
+                    Text("1 day").tag(1)
+                    Text("7 days").tag(7)
+                    Text("Never").tag(0)
+                }
+                Text("Never one an agent is using, recording or asking you in, or the tab you are looking at.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
