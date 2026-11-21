@@ -1255,4 +1255,258 @@ public enum PageScripts {
       for (const [k, v] of Object.entries(statics)) Object.defineProperty(PublicKeyCredential, k, { configurable: true, writable: true, value: v });
     })();
     """#
+
+    /// Page world, every frame, only in a workspace with `agweb media` or `agweb geolocation` set: fake devices the
+    /// app answers for (FakeDevices, message handler agwebDevices), each part guarded, so a live page given the script
+    /// again gets only the parts it lacks. Replaced functions take the name, length and enumerability of the ones they
+    /// replace, so a page sees the same shapes as in Safari.
+    public static func devicesShim(media: Bool, geolocation: Bool) -> String {
+        "(() => {\n" + devicesShared + (media ? mediaPart : "") + (geolocation ? geolocationPart : "") + permissionsPart + "})();"
+    }
+
+    private static let devicesShared = #"""
+      const handler = window.webkit?.messageHandlers?.agwebDevices;
+      if (!handler) return;
+      const once = (name) => { const mark = Symbol.for('agweb.' + name); if (window[mark]) return false; Object.defineProperty(window, mark, { value: true }); return true; };
+      // Looked up on each call: the app removes the handler when the workspace stops faking, and adds a new one back.
+      const post = async (m) => window.webkit.messageHandlers.agwebDevices.postMessage(m);
+      const fail = (name, message) => new DOMException(message, name);
+      // Name and length as the replaced function's. Function.prototype.toString is left alone: replacing it makes every
+      // function on the page look tampered with (CreepJS: hasToStringProxy, and webdriver flagged as a lie), and a
+      // Proxy prints as "function ProxyObject()" in JavaScriptCore.
+      const dress = (f, original, name, length) => {
+        Object.defineProperty(f, 'name', { value: original?.name ?? name });
+        Object.defineProperty(f, 'length', { value: original?.length ?? length });
+        return f;
+      };
+      const patch = (o, name, fn, length = 0) => {
+        const was = Object.getOwnPropertyDescriptor(o, name);
+        const f = dress({ [name](...args) { return fn.apply(this, args); } }[name], was?.value, name, length);
+        Object.defineProperty(o, name, { configurable: true, writable: true, enumerable: was?.enumerable ?? true, value: f });
+      };
+      const getter = (o, name, get, set) => {
+        const was = Object.getOwnPropertyDescriptor(o, name);
+        const d = Object.getOwnPropertyDescriptor({ get [name]() { return get.call(this); }, set [name](v) { set?.call(this, v); } }, name);
+        Object.defineProperty(o, name, { configurable: true, enumerable: was?.enumerable ?? true, get: dress(d.get, was?.get, 'get ' + name, 0),
+          ...(set ? { set: dress(d.set, was?.set, 'set ' + name, 1) } : {}) });
+      };
+
+    """#
+
+    /// getUserMedia answers with the workspace's files, looped, instead of real devices. WKWebView has no
+    /// navigator.mediaDevices without camera and microphone usage strings, so this provides one. The camera is the
+    /// clip's H.264 samples decoded with WebCodecs into a canvas (canvas.captureStream); the microphone is the file's
+    /// audio decoded into a looping Web Audio source, so nothing reaches the speakers. Neither loads a URL, so a page's
+    /// Content-Security-Policy can't block them. Device names and ids look like Safari's (ids hashed per origin by the
+    /// app); the app hands over only the files set for the workspace, so a page can't name a path.
+    private static let mediaPart = #"""
+      if (isSecureContext && window.MediaDevices && window.MediaStreamTrack && HTMLCanvasElement.prototype.captureStream && once('media')) {
+        const kinds = { videoinput: 'camera', audioinput: 'mic' };
+        const bytes = (b64) => {
+          if (Uint8Array.fromBase64) return Uint8Array.fromBase64(b64);
+          const bin = atob(b64), out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        };
+        const number = (c, name) => { const v = c?.[name]; return typeof v === 'number' ? v : v?.exact ?? v?.ideal ?? v?.max; };
+        // Each getUserMedia call gets its own player; it stops once every track from it (clones included) has stopped.
+        // `held` keeps each track's JS object alive: once collected, stream.getTracks() makes a new one, which the
+        // WeakMap doesn't know, and the page would see the canvas track's own label ("CanvasCaptureMediaStreamTrack").
+        const fakes = new WeakMap(), held = new Set();
+        const own = (track, info, pipe) => { pipe.live++; fakes.set(track, { ...info, pipe }); held.add(track); return track; };
+
+        // WebCodecs, not a <video>: a media element needs a blob: URL, which a page's CSP (media-src) may refuse.
+        const cameraTrack = async (clip, device, c, pipe) => {
+          const unreadable = (why) => fail('NotReadableError', `agweb can't play the camera file ${clip.name}: ${why}`);
+          if (!window.VideoDecoder) throw unreadable('this WebKit has no WebCodecs');
+          const data = bytes(clip.data);
+          const config = { codec: clip.codec, description: bytes(clip.description), codedWidth: clip.width, codedHeight: clip.height };
+          if (!(await VideoDecoder.isConfigSupported(config)).supported) throw unreadable(`${clip.codec} is not supported`);
+          const canvas = document.createElement('canvas');
+          canvas.width = clip.width; canvas.height = clip.height;
+          const g = canvas.getContext('2d');
+          // Decoded frames wait in `ready` until their time comes; the clip loops by flushing and starting over.
+          const ready = [];
+          let on = true, loop = 0, fed = 0, flushing = false, timer = 0;
+          const decoder = new VideoDecoder({ output: (f) => { if (on) ready.push({ f, at: loop * clip.duration + f.timestamp }); else f.close(); },
+                                             error: () => { on = false; } });
+          decoder.configure(config);
+          const feed = () => {
+            while (on && !flushing && decoder.decodeQueueSize + ready.length < 6) {
+              if (fed === clip.samples.length) {
+                flushing = true;
+                decoder.flush().then(() => { loop++; fed = 0; flushing = false; feed(); }, () => {});
+                return;
+              }
+              const [timestamp, key, offset, size, duration] = clip.samples[fed++];
+              decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp, duration, data: data.subarray(offset, offset + size) }));
+            }
+          };
+          let start = performance.now(), last = start;
+          const tick = () => {
+            if (!on) return;
+            // A throttled or suspended tab: the clip pauses for the gap instead of racing through the frames it missed.
+            const t = performance.now();
+            // Over 2 s, not the ~1 s ticks of a throttled hidden page, which would freeze the picture instead.
+            if (t - last > 2000) start += t - last;
+            last = t;
+            const now = (t - start) * 1000;
+            let frame = null;
+            // Behind (a throttled background tab): skip to the latest frame due.
+            while (ready.length && ready[0].at <= now) { frame?.close(); frame = ready.shift().f; }
+            if (frame) { g.drawImage(frame, 0, 0); frame.close(); }
+            feed();
+            timer = setTimeout(tick, 10);
+          };
+          feed();
+          tick();
+          const fps = number(c, 'frameRate') || Math.round(clip.samples.length * 1e6 / clip.duration) || 30;
+          pipe.stops.push(() => { on = false; clearTimeout(timer); if (decoder.state !== 'closed') decoder.close(); ready.forEach((r) => r.f.close()); ready.length = 0; });
+          return own(canvas.captureStream(fps).getVideoTracks()[0], { device,
+            settings: { width: canvas.width, height: canvas.height, frameRate: fps, aspectRatio: canvas.width / canvas.height, facingMode: 'user' } }, pipe);
+        };
+
+        const micTrack = async (file, device, pipe) => {
+          const ctx = new AudioContext();
+          let buffer;
+          try { buffer = await ctx.decodeAudioData(bytes(file.data).buffer); } catch (e) {
+            ctx.close();
+            throw fail('NotReadableError', `agweb could not decode the microphone file ${file.name}`);
+          }
+          const source = ctx.createBufferSource();
+          source.buffer = buffer; source.loop = true;
+          const out = ctx.createMediaStreamDestination();
+          source.connect(out);
+          source.start();
+          ctx.resume().catch(() => {});
+          pipe.stops.push(() => { source.stop(); ctx.close(); });
+          return own(out.stream.getAudioTracks()[0], { device,
+            settings: { sampleRate: ctx.sampleRate, channelCount: buffer.numberOfChannels, echoCancellation: false, autoGainControl: false, noiseSuppression: false } }, pipe);
+        };
+
+        const T = MediaStreamTrack.prototype;
+        const native = { label: Object.getOwnPropertyDescriptor(T, 'label').get, getSettings: T.getSettings, getCapabilities: T.getCapabilities,
+                         stop: T.stop, clone: T.clone };
+        getter(T, 'label', function () { return fakes.get(this)?.device.label ?? native.label.call(this); });
+        patch(T, 'getSettings', function () {
+          const fake = fakes.get(this), base = native.getSettings.call(this);
+          return fake ? { ...base, ...fake.settings, deviceId: fake.device.id, groupId: fake.device.group } : base;
+        });
+        patch(T, 'getCapabilities', function () {
+          const fake = fakes.get(this);
+          return fake ? { deviceId: fake.device.id, groupId: fake.device.group } : native.getCapabilities?.call(this) ?? {};
+        });
+        patch(T, 'stop', function () {
+          const fake = fakes.get(this), live = this.readyState === 'live';
+          native.stop.call(this);
+          // Emptied after: the closures hold the clip's bytes, and `held` keeps the track (and so the pipe) alive.
+          if (fake && live && --fake.pipe.live === 0) { fake.pipe.stops.forEach((stop) => stop()); fake.pipe.stops.length = 0; }
+        });
+        patch(T, 'clone', function () {
+          const copy = native.clone.call(this), fake = fakes.get(this);
+          return fake && this.readyState === 'live' ? own(copy, fake, fake.pipe) : copy;
+        });
+
+        const deviceInfo = (kind, d) => {
+          const props = { deviceId: d.id, kind, label: d.label, groupId: d.group };
+          const o = Object.create((window.InputDeviceInfo || window.MediaDeviceInfo).prototype);
+          for (const [k, v] of Object.entries(props)) Object.defineProperty(o, k, { value: v, enumerable: true });
+          Object.defineProperty(o, 'toJSON', { value: () => ({ ...props }) });
+          Object.defineProperty(o, 'getCapabilities', { value: () => ({ deviceId: d.id, groupId: d.group }) });
+          return o;
+        };
+        const M = MediaDevices.prototype;
+        patch(M, 'getUserMedia', async (constraints) => {
+          const video = constraints?.video, audio = constraints?.audio;
+          if (!video && !audio) throw new TypeError('At least one of audio and video must be requested');
+          const r = await post({ camera: !!video, mic: !!audio }).catch(() => ({ error: { name: 'NotFoundError', message: 'Requested device not found' } }));
+          if (r?.error) throw fail(r.error.name, r.error.message);
+          const pipe = { live: 0, stops: [] };
+          try {
+            const tracks = [];
+            if (video) tracks.push(await cameraTrack(r.camera, r.devices.camera, video, pipe));
+            if (audio) tracks.push(await micTrack(r.mic, r.devices.mic, pipe));
+            // The app keeps a capturing tab awake, as Safari does, until every track from this call has stopped.
+            post({ capturing: 1 }).catch(() => {});
+            pipe.stops.push(() => post({ capturing: -1 }).catch(() => {}));
+            return new MediaStream(tracks);
+          } catch (e) { pipe.stops.forEach((stop) => stop()); throw e; }
+        });
+        patch(M, 'enumerateDevices', async () => {
+          const { devices } = await post({ info: true }).catch(() => ({ devices: {} }));
+          return Object.entries(kinds).filter(([, key]) => devices[key]).map(([kind, key]) => deviceInfo(kind, devices[key]));
+        });
+        patch(M, 'getSupportedConstraints', () => ({ aspectRatio: true, deviceId: true, echoCancellation: true, facingMode: true, frameRate: true,
+          groupId: true, height: true, sampleRate: true, sampleSize: true, volume: true, width: true, displaySurface: true }));
+        patch(M, 'getDisplayMedia', () => Promise.reject(fail('NotAllowedError', 'The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.')));
+        let ondevicechange = null;
+        getter(M, 'ondevicechange', () => ondevicechange, (v) => { ondevicechange = v; });
+        if (!navigator.mediaDevices) {
+          // A real EventTarget, so addEventListener works, that is a MediaDevices to instanceof.
+          const mediaDevices = Object.setPrototypeOf(new EventTarget(), M);
+          getter(Navigator.prototype, 'mediaDevices', () => mediaDevices);
+        }
+      }
+
+    """#
+
+    /// navigator.geolocation answers with the workspace's position; watchPosition sees a change within a second.
+    private static let geolocationPart = #"""
+      if (window.Geolocation && window.GeolocationPosition && once('geolocation')) {
+        const define = (o, props) => {
+          for (const [k, v] of Object.entries(props)) Object.defineProperty(o, k, { value: v, enumerable: true });
+          Object.defineProperty(o, 'toJSON', { value: () => JSON.parse(JSON.stringify(props)) });
+          return o;
+        };
+        const position = (p) => define(Object.create(GeolocationPosition.prototype), {
+          coords: define(Object.create(GeolocationCoordinates.prototype), { latitude: p.latitude, longitude: p.longitude, altitude: null,
+            accuracy: p.accuracy, altitudeAccuracy: null, heading: null, speed: null }),
+          timestamp: Date.now() });
+        const denied = () => define(Object.create(GeolocationPositionError.prototype), { code: 1, message: 'User denied Geolocation' });
+        const where = async () => (await post({ geolocation: true }).catch(() => null))?.geolocation;
+        const answer = (p, success, failure) => { if (p) success(position(p)); else failure?.(denied()); };
+        const G = Geolocation.prototype;
+        patch(G, 'getCurrentPosition', function (success, failure) {
+          if (typeof success !== 'function') throw new TypeError("Argument 1 ('successCallback') to Geolocation.getCurrentPosition must be a function");
+          where().then((p) => answer(p, success, failure));
+        }, 1);
+        const watches = new Map();
+        let nextWatch = 1;
+        patch(G, 'watchPosition', function (success, failure) {
+          if (typeof success !== 'function') throw new TypeError("Argument 1 ('successCallback') to Geolocation.watchPosition must be a function");
+          const id = nextWatch++;
+          let last;
+          const poll = async () => {
+            const p = await where();
+            if (!watches.has(id)) return;
+            const seen = JSON.stringify(p ?? null);
+            if (seen !== last) { last = seen; answer(p, success, failure); }
+            watches.set(id, setTimeout(poll, 1000));
+          };
+          watches.set(id, 0);
+          poll();
+          return id;
+        }, 1);
+        patch(G, 'clearWatch', function (id) { clearTimeout(watches.get(id)); watches.delete(id); }, 1);
+      }
+
+    """#
+
+    /// navigator.permissions says granted for what the workspace fakes, denied for the rest of these three.
+    private static let permissionsPart = #"""
+      if (window.Permissions && window.PermissionStatus && once('permissions')) {
+        const query = Permissions.prototype.query, state = Object.getOwnPropertyDescriptor(PermissionStatus.prototype, 'state')?.get;
+        const states = new WeakMap();
+        if (state) {
+          patch(Permissions.prototype, 'query', async function (descriptor) {
+            const status = await query.apply(this, arguments);
+            const key = { camera: 'camera', microphone: 'mic', geolocation: 'geolocation' }[descriptor?.name];
+            const set = key && await post({ info: true }).catch(() => null);
+            if (set) states.set(status, set[key] ? 'granted' : 'denied');
+            return status;
+          }, 1);
+          getter(PermissionStatus.prototype, 'state', function () { return states.get(this) ?? state.call(this); });
+        }
+      }
+    """#
 }

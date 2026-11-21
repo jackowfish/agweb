@@ -24,6 +24,7 @@ Idle tabs are suspended: on my Mac five open pages sit at 0% CPU, where Chrome's
 - **Passwords stay out of the transcript.** `fill --secret-cmd 'pass show site'` types a secret the agent never sees in replies. 1Password and Bitwarden CLIs work too.
 - **Passkeys.** Agents sign up and sign in with passkeys, no prompt. Each profile keeps its own in your Keychain. They are agweb's alone: for now they can't be exported to Apple Passwords or 1Password, and agweb can't use the passkeys you keep there.
 - **No ads.** Ads and trackers are blocked with uBlock Origin's lists, which agweb downloads every 4 days. An agent testing analytics can turn it off for its own workspace (`agweb -w task adblock off`).
+- **Fake camera, mic and location.** `agweb media clip.mp4` plays a file to pages as camera and microphone, and `agweb geolocation 48.85 2.29` sets the position; no prompts, no real devices.
 - **Demo videos.** `video-start` records a tab to MP4, with the pointer and clicks drawn in.
 
 

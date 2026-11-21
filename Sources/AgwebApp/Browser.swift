@@ -25,6 +25,8 @@ final class Browser {
         console.browser = self
         NativeInput.onInput = { [weak self] webView in self?.tab(for: webView)?.agentInputAt = Date() }
         Passkeys.shared.browser = self
+        FakeDevices.shared.browser = self
+        FakeDevices.sweep()
         model.onDisplay = { [weak self] id, used in
             guard let self, let tab = self.model.displayedTab, tab.id == id else { return }
             self.mainWindow.bringToTop(tab.webView)
@@ -204,11 +206,25 @@ final class Browser {
         }
     }
 
+    /// Pages already open get the fake devices now (main frames; frames get them at their next load).
+    private func injectDevices(_ workspace: Workspace) {
+        guard let shim = workspace.devicesShim else {
+            // The handler is gone, so the pages' own "stopped" messages can't arrive: nothing keeps their tabs awake.
+            for tab in workspace.tabs { tab.liveCaptures = 0 }
+            updateVisibility()
+            return
+        }
+        for tab in workspace.tabs where tab.pendingURL == nil {
+            tab.webView.evaluateJavaScript(shim, in: nil, in: .page) { _ in }
+        }
+    }
+
     func closeWorkspace(_ workspace: Workspace) {
         // From the sidebar, outside the workspace's queue; an agent's close has already stopped it.
         if workspace.recorder != nil { Task { _ = await describeStop(workspace) } }
         for tab in workspace.tabs { closeTab(tab) }
         workspace.contentController.removeAllScriptMessageHandlers()
+        for kind in ["camera", "mic"] { workspace.setMedia(kind, nil) }
         model.workspaces.removeAll { $0 === workspace }
         if let profile = workspace.profile, !model.workspaces.contains(where: { $0.profile == profile }) { Profiles.release(profile) }
         scheduleSave()
@@ -583,6 +599,42 @@ final class Browser {
             return "fetch and XHR calls matching \(route.pattern) get \(route.status ?? 200)\n" + routeList(workspace)
         case "route-list":
             return routeList(workspace)
+        case "media":
+            if args.first == "off" {
+                for kind in ["camera", "mic"] { workspace.setMedia(kind, nil) }
+                injectDevices(workspace)
+                return workspace.describeMedia()
+            }
+            if let other = args.first { throw Failure("media takes FILE, --camera FILE, --mic FILE, off or nothing, not \(other)") }
+            var chosen: [String: FakeDevices.Source] = [:]
+            if let path = options["file"] { chosen = try await FakeDevices.prepare(path, for: ["camera", "mic"]) }
+            for kind in ["camera", "mic"] {
+                guard let path = options[kind] else { continue }
+                chosen.merge(try await FakeDevices.prepare(path, for: [kind])) { _, new in new }
+            }
+            for (kind, source) in chosen { workspace.setMedia(kind, source) }
+            injectDevices(workspace)
+            return workspace.describeMedia()
+        case "geolocation":
+            switch args.first {
+            case nil: break
+            case "off":
+                workspace.geolocation = nil
+                injectDevices(workspace)
+            default:
+                guard args.count == 2, let latitude = Double(args[0]), let longitude = Double(args[1]),
+                      (-90...90).contains(latitude), (-180...180).contains(longitude) else {
+                    throw Failure("geolocation takes a latitude (-90 to 90) and a longitude (-180 to 180), e.g. geolocation 51.5074 -0.1278, or off")
+                }
+                let accuracy = try options["accuracy"].map { text in
+                    guard let meters = Double(text), meters > 0, meters <= 1_000_000 else { throw Failure("--accuracy is in meters, above 0 and up to 1000000") }
+                    return meters
+                } ?? 20
+                workspace.geolocation = Geolocation(latitude: latitude, longitude: longitude, accuracy: accuracy)
+                injectDevices(workspace)
+            }
+            guard let at = workspace.geolocation else { return "no geolocation set; pages are refused a position" }
+            return "geolocation: \(at.latitude), \(at.longitude) (accuracy \(Int(at.accuracy)) m)"
         case "unroute":
             let before = workspace.routes.count
             workspace.routes = args.first.map { pattern in workspace.routes.filter { $0.pattern != pattern } } ?? []

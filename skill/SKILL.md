@@ -1,6 +1,6 @@
 ---
 name: agweb
-description: "Drive a real, visible WebKit browser from the shell with the agweb CLI (never steals focus; agents work in parallel, one workspace each). Use for any browser task: opening sites, logging in with a saved profile or a password from pass, 1Password or Bitwarden kept out of the transcript, passkeys, clicking, filling forms, reading page text or tables, screenshots, PDFs, waiting for SPAs, network calls and console errors, mocking APIs, cookies, uploads, downloads, demo videos, testing web apps. Use instead of playwright-cli."
+description: "Drive a real, visible WebKit browser from the shell with the agweb CLI (never steals focus; agents work in parallel, one workspace each). Use for any browser task: opening sites, logging in with a saved profile or a password from pass, 1Password or Bitwarden kept out of the transcript, passkeys, clicking, filling forms, reading page text or tables, screenshots, PDFs, waiting for SPAs, network calls and console errors, mocking APIs, a fake camera, microphone or location, cookies, uploads, downloads, demo videos, testing web apps. Use instead of playwright-cli."
 allowed-tools: Bash(agweb:*)
 ---
 
@@ -149,6 +149,17 @@ agweb -w t reload # routes apply to calls made after they are set; reload if the
 agweb -w t requests # routed calls show "(routed)"
 agweb -w t unroute # all, or unroute "**/api/users"
 ```
+
+**Camera, microphone, location.** Fakes for testing video calls, recorders and maps; no prompt, no real device.
+
+```sh
+agweb -w t media ./clip.mp4 # getUserMedia gets its video as the camera and its audio as the mic, looped
+agweb -w t media --mic ./speech.wav # or one at a time: --camera FILE, --mic FILE (audio or video)
+agweb -w t geolocation 48.8584 2.2945 # navigator.geolocation answers with it (--accuracy=M); open pages see a change
+agweb -w t media off # and geolocation off
+```
+
+Open pages get them at once (iframes after a reload). Without them a page is refused camera, mic and location. Events show each request.
 
 **Recording a demo.**
 

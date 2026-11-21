@@ -96,6 +96,14 @@ final class Workspace: Identifiable {
     @ObservationIgnored var routes: [Route] = [] { didSet { installScripts() } }
     /// localStorage from `state-load` by origin, set when the origin next loads.
     @ObservationIgnored var pendingStorage: [String: [[String]]] = [:] { didSet { installScripts() } }
+    /// `agweb media`: the "camera" and "mic" files getUserMedia answers with (FakeDevices), copies under the root.
+    @ObservationIgnored var media: [String: FakeDevices.Source] = [:] { didSet { if media.isEmpty != oldValue.isEmpty { installScripts() } } }
+    /// `agweb geolocation`: the position navigator.geolocation answers with (FakeDevices).
+    @ObservationIgnored var geolocation: Geolocation? { didSet { if (geolocation == nil) != (oldValue == nil) { installScripts() } } }
+    /// Fake devices' ids are hashed with it: the same for a named profile, as Safari keeps them per site.
+    @ObservationIgnored lazy var deviceSalt = profile ?? UUID().uuidString
+    /// The controllers that have the agwebDevices handler now (weak: a closed tab's controller leaves by itself).
+    @ObservationIgnored let devicesHandlers = NSHashTable<WKUserContentController>.weakObjects()
 
     nonisolated var id: String { name }
     var current: Tab? { tabs.first { $0.id == currentID } }
@@ -133,6 +141,25 @@ final class Workspace: Identifiable {
         installScripts()
     }
 
+    /// The fake devices' page script, when the workspace fakes any.
+    var devicesShim: String? {
+        media.isEmpty && geolocation == nil ? nil : PageScripts.devicesShim(media: !media.isEmpty, geolocation: geolocation != nil)
+    }
+
+    /// Pages see window.webkit.messageHandlers.agwebDevices only in a workspace that fakes a device.
+    /// Changed only when that changes: removing a handler invalidates the object live pages hold.
+    private func syncDevicesHandler(_ controller: WKUserContentController) {
+        let wanted = devicesShim != nil
+        guard wanted != devicesHandlers.contains(controller) else { return }
+        if wanted {
+            controller.addScriptMessageHandler(FakeDevices.shared, contentWorld: .page, name: FakeDevices.handlerName)
+            devicesHandlers.add(controller)
+        } else {
+            controller.removeScriptMessageHandler(forName: FakeDevices.handlerName, contentWorld: .page)
+            devicesHandlers.remove(controller)
+        }
+    }
+
     static func addHandlers(_ sink: ConsoleSink, to controller: WKUserContentController) {
         for handler in ["agwebConsole", "agwebPage"] { controller.add(sink, name: handler) }
         controller.addScriptMessageHandler(sink, contentWorld: .page, name: "agwebClipboard")
@@ -150,15 +177,20 @@ final class Workspace: Identifiable {
         if Passkeys.shared.enabled {
             scripts.append(WKUserScript(source: PageScripts.passkeyShim, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         }
+        if let shim = devicesShim {
+            scripts.append(WKUserScript(source: shim, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+        }
         if !pendingStorage.isEmpty, let json = try? JSONEncoder().encode(pendingStorage) {
             scripts.append(WKUserScript(source: PageScripts.pendingStorage(String(decoding: json, as: UTF8.self)),
                                         injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         contentController.removeAllUserScripts()
+        syncDevicesHandler(contentController)
         scripts.forEach(contentController.addUserScript)
         for tab in tabs {
             guard let own = tab.ownController else { continue }
             own.removeAllUserScripts()
+            syncDevicesHandler(own)
             scripts.forEach(own.addUserScript)
             if !tab.pendingSeeds.isEmpty, let json = try? JSONEncoder().encode(tab.pendingSeeds) {
                 own.addUserScript(WKUserScript(source: PageScripts.seedSession(String(decoding: json, as: UTF8.self)),
@@ -183,6 +215,7 @@ final class Workspace: Identifiable {
         if ownController {
             let own = WKUserContentController()
             Self.addHandlers(console, to: own)
+            syncDevicesHandler(own)
             AdBlock.shared.attach(own, to: self)
             config.userContentController = own
         } else {
@@ -575,6 +608,12 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var challengedURL: URL?
     var challenged: Bool { challengedURL != nil && webView.url == challengedURL }
     @ObservationIgnored var events: [String] = []
+    /// The page has asked for the fake position (an event says so once, not on every poll of a watch).
+    @ObservationIgnored var geolocationAsked = false
+    /// getUserMedia calls whose fake tracks are live; the tab stays awake meanwhile (Visibility.swift).
+    @ObservationIgnored var liveCaptures = 0
+    /// What setMuted last set.
+    @ObservationIgnored private var isMuted = false
     /// The cross-origin frame each snapshot ref inside one lives in; a ref missing here is in the page itself.
     @ObservationIgnored var frameRefs: [String: Frame] = [:]
     /// When the agent's last command here ended plus the grace, and the person's last click or key in the page while
@@ -830,6 +869,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     func setMuted(_ muted: Bool) {
+        guard muted != isMuted else { return }
+        isMuted = muted
         // _WKMediaAudioMuted is 1; 0 unmutes.
         let selector = NSSelectorFromString("_setPageMuted:")
         guard webView.responds(to: selector) else { return }
@@ -902,6 +943,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         refLabels.removeAll()
         console.removeAll()
         unreadErrors = 0
+        liveCaptures = 0
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

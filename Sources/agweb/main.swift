@@ -67,6 +67,9 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   request | request-headers | request-body | response-headers | response-body <n>
   route <pattern>               answer matching fetch/XHR calls: --status, --body, --content-type, --header="k: v"
   route-list | unroute [pattern]
+  media <file>                  getUserMedia gets the file, looped, as camera (its video) and microphone (its audio)
+                                instead of devices; --camera FILE / --mic FILE set one; off removes them
+  geolocation <lat> <lon>       navigator.geolocation answers with this position (--accuracy=M, default 20); off
   cookie-list [--domain --path] | cookie-get <name> | cookie-delete <name> | cookie-clear
   cookie-set <name> <value>     --domain (default: this page's host), --path, --expires=unix, --httpOnly, --secure,
                                 --sameSite=Lax|Strict|None
@@ -136,7 +139,7 @@ let flags: Set = ["js", "help", "instant", "headed", "full-page", "submit", "raw
                   "httpOnly", "secure", "gone", "load", "single-page", "check", "all", "enabled", "version", "force"]
 let valued: Set = ["profile", "workspace", "max-idle", "filename", "size", "filter", "status", "body", "content-type",
                    "header", "domain", "path", "expires", "sameSite", "style", "description", "duration", "browser", "text", "url",
-                   "timeout", "color-scheme", "format", "download-dir", "secret-cmd", "secret-file", "max-results"]
+                   "timeout", "color-scheme", "format", "download-dir", "secret-cmd", "secret-file", "max-results", "camera", "mic", "accuracy"]
 let short = ["-w": "workspace", "-p": "profile"]
 func setOption(_ name: String, _ value: String) {
     // --header repeats; the app splits on newlines.
@@ -335,6 +338,28 @@ case "upload" where args.count > 1:
     args = [args[0]] + args.dropFirst().map(absolute)
     // Before the chooser: WebKit takes a missing path as an empty file, and the page only refuses it much later.
     for file in args.dropFirst() where !FileManager.default.isReadableFile(atPath: file) { fail("no such file: \(file)") }
+case "media":
+    // The app reads only its own copy: opening the file where it is, in ~/Downloads say, would make macOS ask the person.
+    if let file = args.first, file != "off" {
+        options["file"] = file
+        args = []
+    }
+    for kind in ["file", "camera", "mic"] {
+        guard let given = options[kind].map(absolute) else { continue }
+        // The file itself, not a link to it: the app would follow a copied link back into the person's folders.
+        let path = URL(fileURLWithPath: given).resolvingSymlinksInPath().path
+        guard FileManager.default.isReadableFile(atPath: path) else { fail("no such file: \(given)") }
+        guard (try? FileManager.default.attributesOfItem(atPath: path)[.type] as? FileAttributeType) == .typeRegular else { fail("not a file: \(given)") }
+        let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
+        guard size <= 200 << 20 else { fail("\(path) is over 200 MB; a short clip is enough, it loops") }
+        let folder = Agweb.root.appendingPathComponent("media/\(UUID().uuidString)")
+        let copy = folder.appendingPathComponent((path as NSString).lastPathComponent)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try FileManager.default.copyItem(atPath: path, toPath: copy.path)
+        } catch { fail("cannot copy \(path): \(error.localizedDescription)") }
+        options[kind] = copy.path
+    }
 case "state-save":
     writeAnswerTo = writeAnswerTo ?? absolute(args.first ?? ".agweb/state-\(stamp).json")
     args = []

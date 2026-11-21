@@ -18,8 +18,14 @@ extension Browser {
         return workspace.busy || workspace.recorder != nil || holding || tab.awakeUntil > Date()
     }
 
+    /// A tab using the fake camera or mic stays awake too, as a capturing page does in Safari: hidden, its frames would
+    /// slow to about one a second and its process would be suspended. Muted while nothing else needs it shown.
     func updateVisibility() {
-        for tab in model.workspaces.lazy.flatMap(\.tabs) { setHidden(tab, !needsVisible(tab)) }
+        for tab in model.workspaces.lazy.flatMap(\.tabs) {
+            let needed = needsVisible(tab), capturing = tab.liveCaptures > 0
+            setHidden(tab, !needed && !capturing)
+            if tab.workspace.name != Self.userWorkspace { tab.setMuted(!needed) }
+        }
     }
 
     /// Before a command on `tab`: shown, so rAF, hover and rendering run again, and kept awake after the command. A
