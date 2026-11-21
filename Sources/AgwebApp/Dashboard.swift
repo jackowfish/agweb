@@ -169,8 +169,12 @@ private struct TabTile: View {
     /// The Settings text size; macOS text styles have fixed sizes, so these are the styles' sizes scaled.
     let scale: CGFloat
     let close: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
     @State private var hovering = false
+    /// A quarter black in dark mode, nothing in light, resolved like the tile's own background: SwiftUI's colorScheme
+    /// read light in the person's window while its colors were dark.
+    private static let dim = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor.black.withAlphaComponent(0.25) : .clear
+    })
 
     var body: some View {
         let workspace = tab.workspace
@@ -182,7 +186,7 @@ private struct TabTile: View {
                     if let image = tab.thumbnail {
                         // A white page glares on the dark dashboard: dimmed there, full brightness while pointed at.
                         Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-                            .overlay(Color.black.opacity(colorScheme == .dark && !hovering ? 0.25 : 0).allowsHitTesting(false))
+                            .overlay(Self.dim.opacity(hovering ? 0 : 1).allowsHitTesting(false))
                             .animation(.easeOut(duration: 0.15), value: hovering)
                     } else {
                         Image(systemName: "globe").font(.system(size: 26 * scale)).foregroundStyle(.tertiary).frame(maxHeight: .infinity)
