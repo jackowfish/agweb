@@ -851,11 +851,28 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         for _ in 0..<5 where (webView.title ?? "").isEmpty { try? await Task.sleep(for: .milliseconds(60)) }
     }
 
+    /// Waits until WebKit has handed the page every mouse event sent so far: it sends them one at a time, so a script
+    /// right after a click would run between its press and release and take the press's user activation away from the
+    /// click (a page's copy or clipboard read in its handler is refused then).
+    func mouseEventsDelivered() async {
+        let selector = NSSelectorFromString("_doAfterProcessingAllPendingMouseEvents:")
+        guard webView.responds(to: selector) else { try? await Task.sleep(for: .milliseconds(150)); return }
+        typealias Call = @convention(c) (AnyObject, Selector, @escaping @convention(block) () -> Void) -> Void
+        let call = unsafeBitCast(webView.method(for: selector), to: Call.self)
+        _ = try? await withTimeout(2, "the page taking the click") { [webView] in
+            await withCheckedContinuation { continuation in call(webView, selector) { continuation.resume() } }
+        }
+    }
+
+    /// What the last load asked for: a failure macOS 15 reports with no URL (a refused proxy login) names it.
+    @ObservationIgnored var requestedURL: URL?
+
     /// Every first load goes through here, so a profile's saved session cookies are back before any page asks.
     /// False when a later load replaced this one while the cookies were coming back.
     @discardableResult
     func load(_ url: URL) async throws -> Bool {
         if let refusal = Profiles.refusal(workspace.profile) { throw Failure(refusal) }
+        requestedURL = url
         loadGeneration += 1
         let generation = loadGeneration
         if let profile = workspace.profile { await Profiles.restoreSessionCookies(profile) }
@@ -1108,7 +1125,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         }
         // As Playwright's does, the error names the URL that failed, which after a redirect is not the one asked for.
         // macOS 15's proxy refusal (POSIX EAUTH) names none: the page asked for, then.
-        let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString ?? webView.url?.absoluteString
+        let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+            ?? webView.url?.absoluteString ?? requestedURL?.absoluteString
         guard isExpected(navigation) else { return }
         let note = workspace.profile.flatMap(Profiles.routeNote)
         // What a proxy answers to missing or wrong credentials; WebKit's text names no proxy. macOS 15 reports it as

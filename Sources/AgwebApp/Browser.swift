@@ -1681,6 +1681,7 @@ final class Browser {
         try await withKeyboard(tab) {
             var failure: Error?
             do { try await body() } catch { failure = error }
+            await tab.mouseEventsDelivered()
             // A press into a field asks for the keyboard from the page's process: the save's answer comes after it.
             tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
             if let failure { throw failure }
