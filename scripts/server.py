@@ -1,8 +1,9 @@
 # The selftest's page server: python's static server, threaded, with ?delay=ms to answer slowly, ?to=URL to redirect
-# and ?challenge=1 for a page shaped like Cloudflare's challenge (its header, its widget's hidden input). A
+# and ?challenge=1 for a page shaped like Cloudflare's challenge (its header, its widget's hidden input), ?basic=USER:PASS
+# for a page behind a Basic login (each wrong try a line in auth.log), ?bearer=1 for a 401 asking for a token. A
 # POST to /order gets a "Posted" page and a line in posts.log, so a test can see a form sent twice; any other POST
 # gets 501, as from python's static server.
-import sys, time
+import base64, sys, time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -17,6 +18,17 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Location", query["to"][0])
             self.end_headers()
             return
+        if "basic" in query or "bearer" in query:
+            sent = self.headers.get("Authorization")
+            if "basic" not in query or sent != "Basic " + base64.b64encode(query["basic"][0].encode()).decode():
+                if sent:
+                    with open("auth.log", "a") as log:
+                        log.write(sent + "\n")
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="agweb"' if "basic" in query else 'Bearer realm="api"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
         if "challenge" in query:
             body = (b'<title>Just a moment...</title><h1>Performing security verification</h1>'
                     b'<div style="margin: 40px; width: 300px; height: 65px"><input type="hidden" id="cf-chl-widget-test_response"></div>')

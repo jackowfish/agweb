@@ -46,3 +46,19 @@ func emptyIsRejected(text: String) {
 func typedInTheAddressField(text: String, expected: String) {
     #expect(Address.typed(text)?.absoluteString == expected)
 }
+
+@Test func originFillsTheDefaultPort() {
+    #expect(Address.origin(scheme: "HTTPS", host: "Example.com", port: nil) == "https://example.com:443")
+    #expect(Address.origin(scheme: "http", host: "127.0.0.1", port: nil) == "http://127.0.0.1:80")
+    #expect(Address.origin(scheme: "http", host: "127.0.0.1", port: 8931) == "http://127.0.0.1:8931")
+    #expect(Address.origin(scheme: "https", host: "example.com", port: 0) == "https://example.com:443")
+}
+
+@Test func authChallengeSchemeAndRealm() {
+    #expect(Address.authChallenge(#"Basic realm="test""#)! == ("Basic", "test"))
+    #expect(Address.authChallenge(#"Digest realm="a b", nonce="x", qop="auth""#)! == ("Digest", "a b"))
+    #expect(Address.authChallenge(#"Negotiate, basic realm="intranet""#)! == ("Basic", "intranet"))
+    #expect(Address.authChallenge("BASIC")! == ("Basic", ""))
+    #expect(Address.authChallenge(#"Bearer realm="api""#) == nil)
+    #expect(Address.authChallenge("NTLM") == nil)
+}

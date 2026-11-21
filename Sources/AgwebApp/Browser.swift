@@ -343,10 +343,11 @@ final class Browser {
         do {
             var output = try await run(request)
             // After the Page section's Title line; a page's own text can't hold "### Page\n" (text escapes it).
-            if let tab = model.workspaces.first(where: { $0.name == request.workspace })?.current, tab.challenged,
+            if let tab = model.workspaces.first(where: { $0.name == request.workspace })?.current, tab.challenged || tab.authWall != nil,
                let page = output.range(of: "### Page\n", options: .backwards),
                let title = output.range(of: "\n- Title: ", range: page.upperBound..<output.endIndex) {
-                let note = await challengeNote(tab)
+                var note = ""
+                if let wall = tab.authWall { note = authNote(tab, wall) } else { note = await challengeNote(tab) }
                 let end = output[title.upperBound...].firstIndex(of: "\n") ?? output.endIndex
                 output.insert(contentsOf: "\n- Note: " + note, at: end)
             }
@@ -549,7 +550,13 @@ final class Browser {
             let tab = workspace.current ?? addTab(to: workspace)
             tab.agentInputAt = Date()
             await wake(tab)
-            if let url = args.first { try await tab.goto(try Address.url(url)) } else { try await tab.loadIfPending() }
+            if let text = args.first {
+                let url = try Address.url(text)
+                try storeBasicAuth(options, for: url, in: workspace)
+                try await tab.goto(url)
+            } else {
+                try await tab.loadIfPending()
+            }
             tab.markSeen()
             return describe(tab)
         default:
@@ -743,7 +750,9 @@ final class Browser {
 
         switch request.command {
         case "goto":
-            try await tab.goto(try Address.url(try arg(0, "url")))
+            let url = try Address.url(try arg(0, "url"))
+            try storeBasicAuth(options, for: url, in: workspace)
+            try await tab.goto(url)
         case "reload":
             // Before the call: WebKit may ask about the navigation before reload() returns.
             tab.resubmitAllowed = true
@@ -1256,13 +1265,18 @@ final class Browser {
             tab.asking = nil
             mainWindow.hideAsk(on: tab.webView)
         }
+        // Asked on a page wanting a Basic login and given no condition: done once a page without one has loaded.
+        let wall = condition == nil ? tab.authWall?.origin : nil
         let waited = try await poll(ms / 1000, "the person (\(message))") {
             guard tab.webView.window != nil else { throw Failure("the tab was closed while asking the person") }
             if done.on { return true }
+            if wall != nil { return tab.authWall == nil && !tab.webView.isLoading }
             return try await condition?.check() ?? false
         }
         let found = condition.map { elsewhere($0.matched(), tab) } ?? ""
-        let how = done.on ? "the person clicked Done" : "\(condition?.what ?? "")\(found) (the person didn't need to click Done)"
+        let how = done.on ? "the person clicked Done"
+            : wall.map { "\($0) no longer asks for a login (the person didn't need to click Done)" }
+            ?? "\(condition?.what ?? "")\(found) (the person didn't need to click Done)"
         return "### Result\n\(how) after \(String(format: "%.0f", waited)) s"
     }
 
@@ -1730,6 +1744,43 @@ final class Browser {
     /// Cloudflare passes some browsers at once and asks others to tick a checkbox, which sits in a closed shadow root
     /// in a cross-origin frame: snapshot, markdown and click can't reach it, a native click at its spot can.
     /// The checkbox appears by script after the load, so a reply right after goto may not have its spot yet.
+    /// `--basic-auth` on open or goto: the login for the URL's origin, its password hidden in replies from now on.
+    private func storeBasicAuth(_ options: [String: String], for url: URL, in workspace: Workspace) throws {
+        guard let user = options["basic-auth"], let password = options["basic-auth-password"] else { return }
+        guard let scheme = url.scheme, ["http", "https"].contains(scheme), let host = url.host else { throw Failure("--basic-auth needs an http or https URL") }
+        workspace.basicAuth[Address.origin(scheme: scheme, host: host, port: url.port)] = (user, password, false)
+        // Only one the agent never saw: hiding a typed `admin:admin` would hide "admin" in every reply.
+        if options["basic-auth-secret"] != nil { hideBasicAuth(user, password) }
+    }
+
+    /// The password, and the header a page echoing its request (httpbin's /headers) would show.
+    private func hideBasicAuth(_ user: String, _ password: String) {
+        secrets.insert(password)
+        secrets.insert(Data("\(user):\(password)".utf8).base64EncodedString())
+    }
+
+    private func authNote(_ tab: Tab, _ wall: Tab.AuthWall) -> String {
+        let asks = "HTTP 401: \(wall.origin) asks for a \(wall.scheme) login" + (wall.realm.isEmpty ? "" : " (realm \"\(wall.realm)\")")
+        if let login = tab.workspace.basicAuth[wall.origin], login.refused {
+            return asks + " and refused the one for \(login.user) (not sent again; give another with goto --basic-auth)"
+        }
+        return asks + ": agweb -w \(tab.workspace.name) goto '\(wall.url.absoluteString)' --basic-auth USER --secret-cmd CMD, "
+            + "or ask the person (the tab shows a login bar)"
+    }
+
+    /// The bar on a tab showing a 401 that asks for a Basic or Digest login; the person's login is kept like `--basic-auth`.
+    func updateLoginBar(_ tab: Tab) {
+        guard let wall = tab.authWall else { return mainWindow.hideLogin(on: tab.webView) }
+        mainWindow.showLogin(on: tab.webView, site: wall.url.host ?? wall.origin, realm: wall.realm,
+                             refused: tab.workspace.basicAuth[wall.origin].flatMap { $0.refused ? $0.user : nil }) { [weak self, weak tab] user, password in
+            guard let self, let tab else { return }
+            tab.workspace.basicAuth[wall.origin] = (user, password, false)
+            self.hideBasicAuth(user, password)
+            // By address: reload() would send a POST's form again.
+            tab.webView.load(URLRequest(url: wall.url))
+        }
+    }
+
     private func challengeNote(_ tab: Tab) async -> String {
         let start = "Cloudflare check. If it is still here after about 10 s, it waits for a click on its \"Verify you are human\" "
             + "checkbox, which snapshot and text can't see"

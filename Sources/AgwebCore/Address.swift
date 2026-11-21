@@ -32,6 +32,20 @@ public enum Address {
         return URL(string: "https://duckduckgo.com/?q=" + (text.addingPercentEncoding(withAllowedCharacters: plain) ?? text))
     }
 
+    /// `scheme://host:port` with the default port filled in: what a Basic login is stored under and matched against.
+    public static func origin(scheme: String, host: String, port: Int?) -> String {
+        let scheme = scheme.lowercased()
+        return "\(scheme)://\(host.lowercased()):\(port.flatMap { $0 > 0 ? $0 : nil } ?? (scheme == "https" ? 443 : 80))"
+    }
+
+    /// The Basic or Digest challenge in a `WWW-Authenticate` header (`Basic realm="test"` is ("Basic", "test")), nil for
+    /// one only other schemes answer (Bearer, NTLM). The realm is the server's text, so it is cut to 60 characters.
+    public static func authChallenge(_ header: String) -> (scheme: String, realm: String)? {
+        guard let match = header.firstMatch(of: #/(?:^|[\s,])(basic|digest)(?:\s|,|$)/#.ignoresCase()) else { return nil }
+        let realm = header[match.range.upperBound...].firstMatch(of: #/^[^,]*?realm="([^"]*)"/#.ignoresCase()).map { String($0.1) } ?? ""
+        return (match.1.prefix(1).uppercased() + match.1.dropFirst().lowercased(), String(realm.prefix(60)))
+    }
+
     private static func hostOf(_ text: String) -> String {
         text.hasPrefix("[") ? String(text.prefix { $0 != "]" }) + "]" : text.prefix { !":/?#".contains($0) }.lowercased()
     }

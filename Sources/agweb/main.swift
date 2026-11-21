@@ -14,6 +14,9 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
 
   open [url]                    start the workspace (-p to reuse a named profile's logins)
   goto <url> | reload | go-back | go-forward
+                                --basic-auth USER --secret-cmd CMD (or USER:PASSWORD), on open too: the login a 401
+                                asks for, for that URL's site, in memory until the workspace closes (with -p, an
+                                accepted one serves the profile's workspaces until agweb quits)
   history                       the tab's back-forward list: where go-back (-1) and go-forward (+1) lead, current is 0
                                 (the 10 around the current one; --max-results=N for more)
   snapshot [target]             page (or one element) as a tree with [ref=eN] handles; iframes included
@@ -145,7 +148,8 @@ let flags: Set = ["js", "help", "instant", "headed", "full-page", "submit", "raw
                   "httpOnly", "secure", "gone", "load", "single-page", "check", "all", "enabled", "version", "force"]
 let valued: Set = ["profile", "workspace", "max-idle", "filename", "size", "filter", "status", "body", "content-type",
                    "header", "domain", "path", "expires", "sameSite", "style", "description", "duration", "browser", "text", "url",
-                   "timeout", "color-scheme", "device", "format", "download-dir", "secret-cmd", "secret-file", "max-results", "camera", "mic", "accuracy"]
+                   "timeout", "color-scheme", "device", "format", "download-dir", "secret-cmd", "secret-file", "max-results", "camera", "mic", "accuracy",
+                   "basic-auth"]
 let short = ["-w": "workspace", "-p": "profile"]
 func setOption(_ name: String, _ value: String) {
     // --header repeats; the app splits on newlines.
@@ -288,17 +292,35 @@ func secret(command: String?, file: String?) -> String {
 }
 
 let settingProxy = command == "profile" && args.first == "set" && args.count == 4 && args[2] == "proxy" && args[3] != "off"
+let basicAuth = options["basic-auth"] != nil
+if basicAuth, !["open", "goto"].contains(command) || args.isEmpty { fail("--basic-auth works with open <url> and goto <url>") }
 if options["secret-cmd"] != nil || options["secret-file"] != nil {
     let command = options.removeValue(forKey: "secret-cmd"), file = options.removeValue(forKey: "secret-file")
-    guard positional.first == "fill" || settingProxy else { fail("--secret-cmd and --secret-file work with fill and profile set <name> proxy <url>") }
+    guard positional.first == "fill" || settingProxy || basicAuth else {
+        fail("--secret-cmd and --secret-file work with fill, open/goto --basic-auth and profile set <name> proxy <url>")
+    }
     guard command == nil || file == nil else { fail("use --secret-cmd or --secret-file, not both") }
     if settingProxy {
         options["proxy-password"] = secret(command: command, file: file)
+    } else if basicAuth {
+        options["basic-auth-password"] = secret(command: command, file: file)
+        options["basic-auth-secret"] = ""
     } else {
         guard positional.count == 2 else { fail("use: agweb fill <target> --secret-cmd CMD | --secret-file PATH (no text)") }
         args.append(secret(command: command, file: file))
         options["secret"] = ""
     }
+}
+// --basic-auth USER:PASSWORD, or USER with the password from --secret-cmd/--secret-file.
+if let auth = options["basic-auth"] {
+    let user = String(auth.prefix { $0 != ":" }), inline = auth.contains(":") ? String(auth.drop { $0 != ":" }.dropFirst()) : nil
+    guard !user.isEmpty else { fail("use: --basic-auth USER:PASSWORD, or --basic-auth USER --secret-cmd CMD") }
+    guard (inline == nil) != (options["basic-auth-password"] == nil) else {
+        fail(inline == nil ? "--basic-auth \(user) needs a password: USER:PASSWORD, --secret-cmd or --secret-file"
+                           : "--basic-auth has a password and --secret-cmd/--secret-file gives another; use one")
+    }
+    options["basic-auth"] = user
+    if let inline { options["basic-auth-password"] = inline }
 }
 // The password travels as an option, never in the arguments, which the app's command log keeps.
 if settingProxy {

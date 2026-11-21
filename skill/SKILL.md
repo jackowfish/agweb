@@ -52,6 +52,8 @@ agweb -w task ask "Please sign in, then click Done" --url=/dashboard # no creden
 
 The profile is fixed at `open`: `close`, then `open -p`. `--secret-cmd CMD` (`pass show site`, `op read op://vault/site/password`, `bw get password site`) and `--secret-file PATH` take the first line; the value shows as `<hidden>` in every reply.
 
+HTTP Basic or Digest login (the reply's Note says `HTTP 401: … asks for a Basic login`): `agweb -w task goto URL --basic-auth USER --secret-cmd 'pass show staging'` (also on `open`; `USER:PASSWORD` for test logins). It holds for that site, in memory, until the workspace closes (with `-p`, WebKit keeps an accepted one for every workspace on the profile until agweb quits); a refused one is never sent again. With none, `ask` the person, who logs in with the bar on the tab.
+
 Proxy: `agweb profile set work proxy socks5://user@host:1080 --secret-cmd 'pass show proxy'` (or `http://`, `https://`; `off` removes it). Set it before the profile's first `open`, or it waits for agweb's restart (the person's call). Nothing goes direct, but WebRTC leaks the real IP.
 
 Passkeys: a site's passkey sign-up or sign-in button works with no prompt (Events: `passkey created for ...`). They are agweb's own, per profile: use `-p` for an account you'll come back to (a fresh workspace's go at `close`). agweb can't use the person's Apple Passwords or 1Password passkeys: for an account that has only those, `ask` the person to sign in, then add an agweb passkey in the account's security settings. `agweb -w task passkey list` lists the profile's passkeys; `passkey delete <id>` deletes one an agent made.

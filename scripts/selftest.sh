@@ -258,6 +258,17 @@ check "Page" -w alpha fill '.twin' seen
 check '"seen"' -w alpha eval "() => document.querySelectorAll('.twin')[1].value + document.querySelectorAll('.twin')[0].value"
 fails "now: .twin\[hidden\] is on the page but hidden" -w alpha wait '.twin[hidden]' --timeout=300
 check "Page" -w alpha eval "() => document.querySelectorAll('.twin').forEach(e => e.remove())"
+# Basic auth, in a fresh workspace: WebKit keeps an accepted login for its data store.
+basic="$u?basic=alice:pw-basic-1"
+check 'HTTP 401: http://127.0.0.1:[0-9]* asks for a Basic login (realm "agweb")' -w basic open "$basic"
+check "refused the one for alice" -w basic goto "$basic" --basic-auth alice:wrong-pw
+check "refused the one for alice" -w basic reload
+[ "$(grep -c . "$dir/auth.log" 2>/dev/null)" = 1 ] && printf 'ok    a refused Basic login is sent once\n' || fail "a refused Basic login was sent $(grep -c . "$dir/auth.log" 2>/dev/null) times"
+check "Title: agweb test" -w basic goto "$basic" --basic-auth alice --secret-cmd 'printf pw-basic-1'
+check '^<hidden> <hidden>$' -w basic --raw eval "'pw-basic-1 ' + btoa('alice:pw-basic-1')"
+fails "works with open <url> and goto <url>" -w basic reload --basic-auth alice:x
+lacks "HTTP 401" -w basic goto "$u?bearer=1"
+check "closed" -w basic close
 check "Cloudflare check.*mousemove [0-9]* [0-9]*" -w alpha goto "$u?challenge=1"
 check '"note":"Cloudflare check' -w alpha --json markdown
 lacks "Cloudflare check" -w alpha go-back

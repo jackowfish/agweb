@@ -127,6 +127,24 @@ final class MainWindow: NSObject, NSWindowDelegate {
         webView.superview?.subviews.filter { $0.identifier == Self.askBar }.forEach { $0.removeFromSuperview() }
     }
 
+    static let loginBar = NSUserInterfaceItemIdentifier("login")
+
+    /// A Basic or Digest login for a 401 page, floating just below the toolbar; it never takes focus.
+    func showLogin(on webView: WKWebView, site: String, realm: String, refused: String?, submit: @escaping (String, String) -> Void) {
+        guard let host = webView.superview else { return }
+        hideLogin(on: webView)
+        let bar = NSHostingView(rootView: LoginBar(site: site, realm: realm, refused: refused, submit: submit))
+        bar.identifier = Self.loginBar
+        let width = min(bar.fittingSize.width, host.bounds.width - 32), height = bar.fittingSize.height
+        bar.frame = NSRect(x: (host.bounds.width - width) / 2, y: host.bounds.height - topInset - height - 12, width: width, height: height)
+        bar.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        host.addSubview(bar)
+    }
+
+    func hideLogin(on webView: WKWebView) {
+        webView.superview?.subviews.filter { $0.identifier == Self.loginBar }.forEach { $0.removeFromSuperview() }
+    }
+
     /// Over every tab; the tabs underneath are hidden while it shows.
     func showDashboard(_ open: Bool) {
         dashboardButton.state = open ? .on : .off
@@ -440,6 +458,39 @@ private struct AskBar: View {
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(.regularMaterial, in: Capsule())
         .fixedSize()
+    }
+}
+
+private struct LoginBar: View {
+    let site: String
+    let realm: String
+    let refused: String?
+    let submit: (String, String) -> Void
+    @State private var user: String
+    @State private var password = ""
+
+    init(site: String, realm: String, refused: String?, submit: @escaping (String, String) -> Void) {
+        (self.site, self.realm, self.refused, self.submit) = (site, realm, refused, submit)
+        _user = State(initialValue: refused ?? "")
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "key.fill").foregroundStyle(refused == nil ? Color.secondary : Color.red)
+            Text(refused.map { "\(site) refused \($0)" } ?? "\(site) asks for a login").lineLimit(1)
+                .help(realm.isEmpty ? "" : "Realm: \(realm)")
+            TextField("User", text: $user).frame(width: 120)
+            SecureField("Password", text: $password).frame(width: 120).onSubmit(logIn)
+            Button("Log In", action: logIn).disabled(user.isEmpty)
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .fixedSize()
+    }
+
+    private func logIn() {
+        if !user.isEmpty { submit(user, password) }
     }
 }
 

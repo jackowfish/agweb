@@ -45,6 +45,9 @@ final class Workspace: Identifiable {
     let profile: String?
     var tabs: [Tab] = []
     var currentID: Int?
+    /// Basic and Digest logins by origin (`Address.origin`), from `--basic-auth` or the login bar; in memory only. A
+    /// refused one is kept for the note but never sent again: each try could count toward the account's lockout.
+    @ObservationIgnored var basicAuth: [String: (user: String, password: String, refused: Bool)] = [:]
     /// True while an agent command runs. Commands on one workspace are serialized, so this is exact.
     /// Pages may open windows only meanwhile: WebKit blocks a window.open that follows a fetch after the click
     /// (a deploy button that opens a window after a fetch), and an ad's timer must not hand an idle agent a new tab.
@@ -624,6 +627,10 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     /// restored by back or forward gets no response to clear or set it.
     @ObservationIgnored var challengedURL: URL?
     var challenged: Bool { challengedURL != nil && webView.url == challengedURL }
+    /// A 401 asking for a Basic or Digest login, by address like `challengedURL`.
+    struct AuthWall { let url: URL, origin: String, scheme: String, realm: String }
+    @ObservationIgnored var authWallSeen: AuthWall?
+    var authWall: AuthWall? { authWallSeen.flatMap { $0.url == webView.url ? $0 : nil } }
     @ObservationIgnored var events: [String] = []
     /// The page has asked for the fake position (an event says so once, not on every poll of a watch).
     @ObservationIgnored var geolocationAsked = false
@@ -1048,6 +1055,31 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         console.removeAll()
         unreadErrors = 0
         liveCaptures = 0
+        browser?.updateLoginBar(self)
+    }
+
+    /// Answers a Basic or Digest login from the workspace's, once: a refused one shows the 401 page (default handling
+    /// would resend WebKit's cached one forever). Everything else (proxies, certificates) is left to WebKit, as without
+    /// this method. Never a permanent credential: WebKit would save it in the Keychain.
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping @MainActor (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let space = challenge.protectionSpace
+        let origin = Address.origin(scheme: space.protocol ?? "", host: space.host, port: space.port)
+        // A server offering Negotiate or NTLM first (IIS) gets to its Basic offer only if those are turned down.
+        if [NSURLAuthenticationMethodNegotiate, NSURLAuthenticationMethodNTLM].contains(space.authenticationMethod), !space.isProxy(),
+           workspace.basicAuth[origin].map({ !$0.refused }) == true {
+            return completionHandler(.rejectProtectionSpace, nil)
+        }
+        guard !space.isProxy(), [NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest].contains(space.authenticationMethod) else {
+            return completionHandler(.performDefaultHandling, nil)
+        }
+        // Refused is set by the page's 401 (decidePolicyFor navigationResponse), not a fetch's under another realm.
+        guard let login = workspace.basicAuth[origin], !login.refused, challenge.previousFailureCount == 0 else {
+            // A user:pass@ address is still WebKit's to answer, once; no credential renders the 401 page.
+            let fresh = workspace.basicAuth[origin] == nil && challenge.previousFailureCount == 0
+            return completionHandler(fresh ? .performDefaultHandling : .useCredential, nil)
+        }
+        completionHandler(.useCredential, URLCredential(user: login.user, password: login.password, persistence: .forSession))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1123,6 +1155,14 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             requests.removeAll()
             blocked.removeAll()
             challengedURL = http?.value(forHTTPHeaderField: "cf-mitigated")?.lowercased() == "challenge" ? http?.url : nil
+            authWallSeen = nil
+            if let http, http.statusCode == 401, let header = http.value(forHTTPHeaderField: "WWW-Authenticate"), let url = http.url,
+               let scheme = url.scheme, let host = url.host {
+                let origin = Address.origin(scheme: scheme, host: host, port: url.port)
+                authWallSeen = Address.authChallenge(header).map { AuthWall(url: url, origin: origin, scheme: $0.scheme, realm: $0.realm) }
+                // The page itself still asks with a login stored: refused, and never sent again.
+                if authWallSeen != nil { workspace.basicAuth[origin]?.refused = true }
+            }
         }
         if let http {
             requests.append(["kind": navigationResponse.isForMainFrame ? "document" : "frame", "method": "GET", "url": http.url?.absoluteString ?? "",
