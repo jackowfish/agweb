@@ -79,7 +79,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         } catch { return false }
     }
 
-    /// What `profile-delete` must not take with it: the passkeys the person made there.
+    /// What `profile delete` must not take with it: the passkeys the person made there.
     func personMade(profile name: String) throws -> [String] {
         try store.all().filter { $0.profile == name && !((try? agentMade($0, store)) ?? false) }.map { "the passkey for \($0.label)" }
     }

@@ -6,7 +6,7 @@ public enum Commands {
         "console", "requests", "request", "request-headers", "request-body", "response-headers", "response-body", "route",
         "route-list", "unroute", "cookie-list", "cookie-get", "cookie-set", "cookie-delete", "cookie-clear", "clipboard", "clipboard-set", "state-save",
         "state-load", "dialog-accept", "dialog-dismiss", "ask", "tab-list", "tab-new", "tab-select", "tab-close", "show", "close",
-        "list", "close-all", "profile-list", "profile-delete", "passkey", "adblock", "dashboard", "install-skill", "install-cli", "update", "quit", "version",
+        "list", "close-all", "profile", "passkey", "adblock", "dashboard", "install-skill", "install-cli", "update", "quit", "version",
     ]
 
     /// Names agents reach for that mean something agweb spells differently.
@@ -14,7 +14,7 @@ public enum Commands {
         "tabs": "tab-list", "tab": "tab-list", "list-tabs": "tab-list", "select-tab": "tab-select", "switch-tab": "tab-select",
         "switch": "tab-select", "sessions": "list", "sleep": "wait", "network": "requests", "navigate": "goto", "back": "go-back", "back-forward": "history", "back-forward-list": "history",
         "forward": "go-forward", "evaluate": "eval", "content": "markdown", "read": "markdown", "search": "find", "grep": "find", "triple-click": "click", "scroll": "mousewheel",
-        "upgrade": "update", "copy": "clipboard", "clipboard-get": "clipboard", "clipboard-read": "clipboard", "clipboard-write": "clipboard-set", "clipboard-copy": "clipboard-set", "scroll-to": "scroll-into-view", "scrollintoview": "scroll-into-view", "scroll-into-view-if-needed": "scroll-into-view",
+        "profiles": "profile", "upgrade": "update", "copy": "clipboard", "clipboard-get": "clipboard", "clipboard-read": "clipboard", "clipboard-write": "clipboard-set", "clipboard-copy": "clipboard-set", "scroll-to": "scroll-into-view", "scrollintoview": "scroll-into-view", "scroll-into-view-if-needed": "scroll-into-view",
     ]
 
     public static func unknown(_ name: String) -> String {

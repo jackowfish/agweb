@@ -33,10 +33,17 @@ public enum CommandLog {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// A magic link or OAuth redirect carries its token in the query or fragment.
+    /// A magic link or OAuth redirect carries its token in the query or fragment; a proxy URL its password
+    /// (`profile set` mistyped, so the CLI didn't take it out).
     static func withoutQuery(_ text: String) -> String {
-        guard text.hasPrefix("http://") || text.hasPrefix("https://"), var url = URLComponents(string: text),
-              url.query != nil || url.fragment != nil else { return text }
+        guard text.contains("://") else { return text }
+        // A password with characters URLComponents refuses.
+        guard var url = URLComponents(string: text) else { return text.contains("@") ? "<hidden>" : text }
+        let password = url.password != nil
+        if password { url.password = "<hidden>" }
+        guard text.hasPrefix("http://") || text.hasPrefix("https://"), url.query != nil || url.fragment != nil else {
+            return password ? url.string ?? "<hidden>" : text
+        }
         url.query = nil
         url.fragment = nil
         return (url.string ?? text) + "?…"

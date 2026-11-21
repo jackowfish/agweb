@@ -4,6 +4,7 @@
 # Exits with the number of failed checks.
 set -u
 cd "$(dirname "$0")"
+scripts=$PWD
 dir=$(mktemp -d /tmp/agweb-test.XXXXXX)
 export AGWEB_ROOT="$dir/r"
 unset AGWEB_PROFILE AGWEB_WORKSPACE
@@ -28,8 +29,8 @@ unnamed="$AGWEB_ROOT/webkit/00000000-0000-0000-0000-000000000001"
 mkdir -p "$unnamed"
 
 # A free port the server really answers on, or stop: without it every check fails for the same reason.
-server=
-trap '"$agweb" quit >/dev/null 2>&1; [ -n "$server" ] && kill $server 2>/dev/null; wait 2>/dev/null; for d in "$suite" "agweb.root$(printf %s "$dir/o" | tr / _)"; do defaults delete "$d" 2>/dev/null; rm -f ~/Library/Preferences/"$d".plist; done; rm -r "$dir"' EXIT
+server= proxy=
+trap '"$agweb" quit >/dev/null 2>&1; [ -n "$server" ] && kill $server 2>/dev/null; [ -n "$proxy" ] && kill $proxy 2>/dev/null; wait 2>/dev/null; for d in "$suite" "agweb.root$(printf %s "$dir/o" | tr / _)"; do defaults delete "$d" 2>/dev/null; rm -f ~/Library/Preferences/"$d".plist; done; rm -r "$dir"' EXIT
 for _ in 1 2 3; do
     port=$(/usr/bin/python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     (script="$PWD/server.py"; cd "$dir" && exec /usr/bin/python3 "$script" "$port" >"$dir/server.log" 2>&1) &
@@ -940,10 +941,13 @@ check "Title" -w beta show
 check "^profile selftest-shared$" list
 check "^  - beta (" list
 check "^  - eph1 (" list
+check "selftest-shared: beta, gamma" profile list
+# The old names still work.
 check "selftest-shared: beta, gamma" profile-list
 fails "in use by beta, gamma" profile-delete selftest-shared
+check "profile set <name> proxy" help profile-list
 # Not `AGWEB_ROOT=... run`: sh keeps an assignment made before a function call.
-out=$(AGWEB_ROOT="$dir/o" "$agweb" profile-list 2>&1) || fail "the instance on another root failed: $out"
+out=$(AGWEB_ROOT="$dir/o" "$agweb" profile 2>&1) || fail "the instance on another root failed: $out"
 printf '%s' "$out" | grep -q "no named profiles" || fail "an instance on another root sees this one's profiles: $out"
 if [ "$test_domain" != "$domain" ]; then
     out=$(env -u AGWEB_ROOT "$agweb" list 2>&1) && fail "a test build ran without AGWEB_ROOT: $out"
@@ -953,6 +957,69 @@ fi
 AGWEB_ROOT="$dir/o" "$agweb" quit >/dev/null 2>&1
 check "confirm() and prompt() will be accepted" -w beta dialog-accept
 check "will be dismissed" -w beta dialog-dismiss
+
+echo "== a named profile's proxy: its pages go through it, nothing goes direct when it fails, no password shows"
+free_port() { /usr/bin/python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+sport=$(free_port) hport=$(free_port) dead=$(free_port)
+pw=pw-$$-selftest
+/usr/bin/python3 "$scripts/proxy.py" --socks "$sport" --http "$hport" --log "$dir/proxy.log" --auth "px:$pw" --map proxied.agweb.test=127.0.0.1 2>"$dir/proxy.err" &
+proxy=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q ready "$dir/proxy.log" 2>/dev/null && break; sleep 0.3; done
+grep -q ready "$dir/proxy.log" 2>/dev/null || fail "proxy.py did not start: $(cat "$dir/proxy.err")"
+# Only the proxy knows this name (a resolver that answers every name would fail the direct checks).
+proxied="http://proxied.agweb.test:$port/index.html"
+check "profile selftest-px: proxy socks5://px@127.0.0.1:$sport, password saved" profile set selftest-px proxy "socks5://px@127.0.0.1:$sport" --secret-cmd "echo $pw"
+check "Title: agweb test" -w px open -p selftest-px "$proxied"
+grep -q "socks5 proxied.agweb.test:$port px" "$dir/proxy.log" || fail "the SOCKS5 proxy did not carry the page with its credentials: $(cat "$dir/proxy.log")"
+fails "navigation failed" -w eph1 goto "$proxied"
+check "Page" -w eph1 goto "$u"
+check "profile selftest-hx: proxy http://px@127.0.0.1:$hport, password saved" profile set selftest-hx proxy "http://px:$pw@127.0.0.1:$hport"
+check "Title: agweb test" -w hx open -p selftest-hx "$proxied"
+grep -q "http proxied.agweb.test:$port px" "$dir/proxy.log" || fail "the HTTP proxy did not carry the page with its credentials: $(cat "$dir/proxy.log")"
+check "selftest-px (proxy socks5://px@127.0.0.1:$sport, password saved): px" profile list
+lacks "$pw" profile list
+[ "$(stat -f %Lp "$AGWEB_ROOT/profiles/proxies.json")" = 600 ] || fail "proxies.json is not 0600"
+fails "a proxy password needs a username" profile set selftest-x proxy "socks5://127.0.0.1:$sport" --secret-cmd "echo $pw"
+fails "has a password and --secret-cmd" profile set selftest-x proxy "socks5://px:$pw@127.0.0.1:$sport" --secret-cmd "echo $pw"
+fails "the proxy needs a port" profile set selftest-x proxy "socks5://px:$pw@127.0.0.1"
+fails "unknown key colour; keys: proxy" profile set selftest-x colour red
+fails "a proxy username needs a password" profile set selftest-x proxy "socks5://px@127.0.0.1:$sport"
+fails "no profile selftest-nope" profile set selftest-nope proxy off
+# Mistyped, so the CLI can't send the password apart: it sends nothing.
+fails "use: agweb profile set <name> proxy <url>" profile set selftest-x "socks5://px:$pw@127.0.0.1:$sport"
+# Fails closed: a refused password and a proxy that is down fail the load and name the proxy (offline, the second
+# would fail anyway).
+check "password saved" profile set selftest-bad proxy "socks5://px:wrong-$pw@127.0.0.1:$sport"
+fails "the proxy asked for a username and password, or refused the saved ones at .*(profile selftest-bad goes through proxy socks5://px@127.0.0.1:$sport)" -w bad open -p selftest-bad "$proxied"
+check "profile selftest-down: proxy socks5://127.0.0.1:$dead$" profile set selftest-down proxy "socks5h://127.0.0.1:$dead"
+fails "navigation failed: .*(profile selftest-down goes through proxy socks5://127.0.0.1:$dead)" -w down open -p selftest-down "http://example.com/"
+# Loopback skips the proxy, as the help says.
+check "Title: agweb test" -w down goto "$u"
+# Changed after its first open in this run: WebKit would keep the old tunnels, so it waits for the next start.
+check "applies when agweb next starts" profile set selftest-px proxy off
+check "selftest-px (no proxy from agweb's next start; now going through socks5://px@127.0.0.1:$sport): px" profile list
+fails "proxy changed after it was opened in this run" -w px2 open -p selftest-px "$u"
+check "Title: agweb test" -w px goto "$proxied?again"
+# An unreadable entry, or file, loads nothing, loopback included; workspaces still open, and nothing rewrites the file.
+cp "$AGWEB_ROOT/profiles/proxies.json" "$dir/proxies.json"
+/usr/bin/python3 -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); d["selftest-ur"] = {"kind": "gopher"}; json.dump(d, open(p, "w"))' "$AGWEB_ROOT/profiles/proxies.json"
+fails "profile selftest-ur has an unreadable proxy in profiles/proxies.json" -w ur open -p selftest-ur "$u"
+fails "profile selftest-ur has an unreadable proxy" -w ur eval 1
+check "selftest-ur (proxy unreadable" profile list
+check "workspace ur closed" -w ur close
+echo '{' >"$AGWEB_ROOT/profiles/proxies.json"
+fails "profiles/proxies.json can't be read" -w ur2 open -p selftest-ur2 "$u"
+fails "profiles/proxies.json can't be read" profile set selftest-ur2 proxy off
+[ "$(cat "$AGWEB_ROOT/profiles/proxies.json")" = "{" ] || fail "profile set rewrote an unreadable proxies.json"
+check "workspace ur2 closed" -w ur2 close
+cp "$dir/proxies.json" "$AGWEB_ROOT/profiles/proxies.json"
+for name in selftest-bad selftest-down selftest-hx selftest-ur selftest-ur2; do
+    "$agweb" -w "${name#selftest-}" close >/dev/null 2>&1
+    check "profile $name deleted" profile delete "$name"
+done
+grep -q "selftest-bad\|selftest-hx" "$AGWEB_ROOT/profiles/proxies.json" && fail "profile delete left its proxy in proxies.json"
+grep -rq -- "$pw" "$AGWEB_ROOT/logs" && fail "the command log holds a proxy password"
+kill $proxy; proxy=
 
 echo "== close and quit finish a recording; workspaces and tabs, a named profile, its session cookies and the window frame survive a relaunch"
 check "recording" -w eph2 video-start "$dir/close.mp4"
@@ -1001,6 +1068,13 @@ check '"tok2"' -w beta eval "sessionStorage.getItem('access_token')"
 check "index.html?again" -w beta goto "$u?again"
 check 'sso=1' -w beta eval 'document.cookie'
 check '\["tok1","L"\]' -w beta eval "[sessionStorage.getItem('access_token'), sessionStorage.getItem('late')]"
+# selftest-px's proxy, turned off in the last run, applies now: the page goes direct (the proxy is gone too, so only
+# the missing proxy line tells them apart). A new query: the page itself is in WebKit's cache.
+fails "navigation failed" -w px goto "$proxied?restarted"
+printf '%s' "$out" | grep -q "goes through proxy" && fail "selftest-px still went through its proxy after a restart"
+lacks "next start" profile list
+check "workspace px closed" -w px close
+check "profile selftest-px deleted" profile delete selftest-px
 check '^null$' -w eph1 --raw eval "sessionStorage.getItem('fresh')"
 check "ad blocking off in workspace eph1" -w eph1 adblock
 check '^loaded$' -w eph1 --raw eval "() => fetch('/index.html?blockapi').then(() => 'loaded', () => 'blocked')"
@@ -1033,14 +1107,14 @@ case "$(defaults read "$suite" agwebMainFrame)" in *"{900, "*) ;; *) false ;; es
 person_now=$(defaults read $domain agwebMainFrame 2>/dev/null)
 [ "$person_now" = "$person_frame" ] || [ "$person_now" != "$(defaults read "$suite" agwebMainFrame)" ] || fail "the selftest saved its window frame over the person's"
 check "workspace delta closed" close-all
-check "profile selftest-shared deleted" profile-delete selftest-shared
+check "profile selftest-shared deleted" profile delete selftest-shared
 check "Title" -w zeta open "$u" -p selftest-shared
 check '^""$' -w zeta eval 'document.cookie'
 check "workspace zeta closed" -w zeta close
-check "profile selftest-shared deleted" profile-delete selftest-shared
-check "profile selftest-alpha deleted" profile-delete selftest-alpha
-lacks "selftest" profile-list
-fails "no profile selftest-alpha" profile-delete selftest-alpha
+check "profile selftest-shared deleted" profile delete selftest-shared
+check "profile selftest-alpha deleted" profile delete selftest-alpha
+lacks "selftest" profile list
+fails "no profile selftest-alpha" profile delete selftest-alpha
 # WebKit keeps a deleted profile's folder while it holds the store; the next launch removes it.
 check "bye" quit
 stopped

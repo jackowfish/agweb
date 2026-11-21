@@ -16,6 +16,17 @@ private func entry(_ command: String, _ args: [String], _ options: [String: Stri
     #expect(try entry("goto", ["https://a.test/login?token=abc#x"])["args"] as? [String] == ["https://a.test/login?…"])
 }
 
+@Test func commandLogKeepsProxyPasswordsOut() throws {
+    for odd in ["http://u:hun ter2@h:1", "http://u:hun[ter2@h:1", "socks5://u:hun%ter2@h:1"] {
+        #expect(!"\(try entry("profile", ["set", "w", "proxy", odd]))".contains("ter2"))
+    }
+    for args in [["set", "work", "proxy", "socks5://u:hunter2@h:1080"], ["set", "proxy", "socks5://u:hunter2@h:1080"], ["set", "work", "socks5://u:hunter2@h:1080", "x"]] {
+        let line = try entry("profile", args, ok: false, output: "Error: nope")
+        #expect(!"\(line)".contains("hunter2"))
+    }
+    #expect(try entry("profil", ["set", "w", "proxy", "http://u:hunter2@h:1"])["args"] as? [String] == ["set", "w", "proxy", "http://u:%3Chidden%3E@h:1"])
+}
+
 @Test func commandLogRecordsTheOutcome() throws {
     let failed = try entry("click", ["e3"], ok: false, output: "Error: ref e3 not found\nmore")
     #expect(failed["error"] as? String == "Error: ref e3 not found")

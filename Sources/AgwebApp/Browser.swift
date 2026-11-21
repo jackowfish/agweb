@@ -62,18 +62,24 @@ final class Browser {
     }
 
     func existingOrNewWorkspace(named name: String, profile: String?) throws -> Workspace {
-        if let profile, profile.trimmingCharacters(in: .whitespaces) != profile || profile.isEmpty {
-            throw Failure("profile names can't be empty or start or end with spaces")
-        }
+        if let profile { try Self.checkProfileName(profile) }
         if let workspace = model.workspaces.first(where: { $0.name == name }) {
             if let profile, profile != workspace.profile {
                 throw Failure("workspace \(name) already uses \(Self.describe(profile: workspace.profile)); close it first to switch")
             }
             return workspace
         }
+        // Never at launch, before any store exists, so reopened workspaces always come back.
+        if let profile, let pending = Profiles.pending(profile) { throw Failure(pending) }
         let workspace = Workspace(name: name, profile: profile, console: console)
         model.workspaces.append(workspace)
         return workspace
+    }
+
+    static func checkProfileName(_ profile: String) throws {
+        if profile.trimmingCharacters(in: .whitespaces) != profile || profile.isEmpty {
+            throw Failure("profile names can't be empty or start or end with spaces")
+        }
     }
 
     private func makeTab(in workspace: Workspace, configuration: WKWebViewConfiguration?, opener: Tab?) -> Tab {
@@ -224,7 +230,7 @@ final class Browser {
         let tab = makeTab(in: workspace, configuration: nil, opener: nil)
         model.dashboardOpen = false
         model.display(tab.id)
-        Task { _ = await tab.load(url) }
+        Task { _ = try? await tab.load(url) }
         let window = mainWindow.window
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
@@ -397,19 +403,42 @@ final class Browser {
             case let other?: throw Failure("adblock takes on, off, update or nothing, not \(other)")
             }
             return AdBlock.shared.status(for: workspace)
-        case "profile-list":
+        case "profile" where (args.first ?? "list") == "list":
             let names = Profiles.names
             if names.isEmpty { return "no named profiles; open a workspace with -p NAME to create one" }
             return names.map { name in
                 let users = model.workspaces.filter { $0.profile == name }.map(\.name)
-                return "- \(name)" + (users.isEmpty ? "" : ": " + users.joined(separator: ", "))
+                return "- \(name)" + (Profiles.proxyNote(name).map { " (\($0))" } ?? "") + (users.isEmpty ? "" : ": " + users.joined(separator: ", "))
             }.joined(separator: "\n")
-        case "profile-delete":
-            let name = try arg(0, "name")
+        case "profile" where args.first == "delete":
+            let name = try arg(1, "name")
             let users = model.workspaces.filter { $0.profile == name }.map(\.name)
             guard users.isEmpty else { throw Failure("profile \(name) is in use by \(users.joined(separator: ", ")); close them first") }
             try await Profiles.delete(name)
             return "profile \(name) deleted"
+        case "profile" where args.first == "set":
+            let name = try arg(1, "name")
+            try Self.checkProfileName(name)
+            let key = try arg(2, "key")
+            guard key == "proxy" else { throw Failure("unknown key \(key); keys: proxy") }
+            let value = try arg(3, "url or off")
+            var spec: ProxySpec?
+            if value != "off" {
+                spec = try ProxySpec.parse(value)
+                // The CLI sends the password apart, as an option: arguments go into the command log.
+                guard spec?.password == nil else { throw Failure("send the proxy's password through the agweb CLI, which keeps it out of the command's arguments") }
+                spec?.password = options["proxy-password"]
+                try spec?.validate()
+            } else if !Profiles.names.contains(name), Profiles.savedRoute(name) == .direct {
+                throw Failure("no profile \(name); see agweb profile list")
+            }
+            let saved = spec.map { "proxy \($0)" + ($0.password == nil ? "" : ", password saved") } ?? "no proxy"
+            guard let old = try Profiles.setProxy(name, spec) else { return "profile \(name): \(saved)" }
+            return "profile \(name): \(saved). It was opened in this run, so this applies when agweb next starts; until then its "
+                + "workspaces keep \(old) and new workspaces on it are refused. Quitting agweb interrupts every agent's "
+                + "workspaces, so leave that to the person"
+        case "profile":
+            throw Failure("profile takes list, set or delete, not \(args[0])")
         case "update":
             let release = try await Updater.latest()
             guard Version.isNewer(release.version, than: Updater.current) else { return "agweb \(Updater.current) is the latest" }
@@ -426,6 +455,7 @@ final class Browser {
             return (["bye"] + videos).joined(separator: "\n")
         case "open":
             let workspace = try existingOrNewWorkspace(named: request.workspace, profile: options["profile"])
+            if let refusal = Profiles.refusal(workspace.profile) { throw Failure(refusal) }
             workspace.downloadDir = options["download-dir"].map { URL(fileURLWithPath: $0) } ?? workspace.downloadDir
             workspace.rawReply = options["raw"] != nil
             workspace.lastCommand = Self.summary(request)
@@ -450,6 +480,10 @@ final class Browser {
         }
         if let profile = options["profile"], profile != workspace.profile {
             throw Failure("workspace \(workspace.name) uses \(Self.describe(profile: workspace.profile)), not profile \(profile); close it and open it with -p \(profile)")
+        }
+        // Its pages load nothing; a reopened tab would otherwise act on a blank page that still shows its saved URL.
+        if let refusal = Profiles.refusal(workspace.profile), !["close", "tab-list", "tab-close"].contains(request.command) {
+            throw Failure(refusal)
         }
         workspace.downloadDir = options["download-dir"].map { URL(fileURLWithPath: $0) } ?? workspace.downloadDir
         workspace.rawReply = options["raw"] != nil

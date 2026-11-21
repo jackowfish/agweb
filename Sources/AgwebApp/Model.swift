@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Observation
 import WebKit
+import Network
 import AgwebCore
 
 @Observable @MainActor
@@ -220,10 +221,129 @@ enum Profiles {
         holdInUse(name)
         if let store = stores[name] { return store }
         // Registered first: another instance's launch sweep removes folders of names it can't find.
-        if !names.contains(name) { update { $0.contains(name) ? $0 : $0 + [name] } }
+        if !names.contains(name) { locked { _ = update { $0.contains(name) ? $0 : $0 + [name] } } }
         let store = makeStore(name)
         stores[name] = store
+        // A store remade after a delete in this run keeps the route the first one had (see `live`).
+        let route = live[name] ?? savedRoute(name)
+        live[name] = route
+        switch route {
+        case .direct: break
+        case .proxy(let spec): store.proxyConfigurations = [configuration(spec)]
+        // Nothing reaches the internet; Tab.load refuses too, for what skips proxies (loopback, link-local).
+        case .unreadable: store.proxyConfigurations = [ProxyConfiguration(httpCONNECTProxy: .hostPort(host: "127.0.0.1", port: 9))]
+        }
         return store
+    }
+
+    // MARK: Proxies
+
+    enum Route: Equatable {
+        case direct, proxy(ProxySpec), unreadable
+    }
+
+    private static let proxiesFile = Agweb.profilesFolder.appendingPathComponent("proxies.json")
+    /// The route each profile's store got when first made in this run, kept after a delete. WebKit keeps a store's
+    /// connections, tunnels through the old proxy included, after its proxy changes and after its workspaces close, so
+    /// a proxy changed in a run waits for the next start; new workspaces on that profile are refused meanwhile.
+    private static var live: [String: Route] = [:]
+
+    static func savedRoute(_ name: String) -> Route {
+        guard FileManager.default.fileExists(atPath: proxiesFile.path) else { return .direct }
+        guard let data = try? Data(contentsOf: proxiesFile), let entries = ProxyRegistry.entries(data) else { return .unreadable }
+        switch entries[name] {
+        case nil: return .direct
+        case .proxy(let spec)?: return .proxy(spec)
+        case .unreadable?: return .unreadable
+        }
+    }
+
+    private static var proxiesFileReadable: Bool {
+        guard FileManager.default.fileExists(atPath: proxiesFile.path) else { return true }
+        return (try? Data(contentsOf: proxiesFile)).flatMap(ProxyRegistry.entries) != nil
+    }
+
+    /// Network.framework's: failover stays off, so a proxy that is down or refuses fails the load instead of going direct.
+    private static func configuration(_ spec: ProxySpec) -> ProxyConfiguration {
+        let endpoint = NWEndpoint.hostPort(host: .init(spec.host), port: .init(integerLiteral: UInt16(spec.port)))
+        let config = switch spec.kind {
+        case .socks5: ProxyConfiguration(socksv5Proxy: endpoint)
+        case .http: ProxyConfiguration(httpCONNECTProxy: endpoint, tlsOptions: nil)
+        case .https: ProxyConfiguration(httpCONNECTProxy: endpoint, tlsOptions: NWProtocolTLS.Options())
+        }
+        if let username = spec.username, let password = spec.password { config.applyCredential(username: username, password: password) }
+        return config
+    }
+
+    /// Why a profile's pages may not load at all: its proxy can't be read.
+    static func refusal(_ name: String?) -> String? {
+        guard let name, live[name] == .unreadable else { return nil }
+        if savedRoute(name) != .unreadable {
+            return "profile \(name)'s proxy couldn't be read when it was opened in this run, so it loads nothing until agweb next starts"
+        }
+        return proxiesFileReadable ? "profile \(name) has an unreadable proxy in profiles/proxies.json; fix it or agweb profile set \(name) proxy off"
+            : ProxyRegistry.unreadableFile
+    }
+
+    /// Whether the profile's pages go through a proxy in this run.
+    static func proxied(_ name: String?) -> Bool {
+        guard let name, case .proxy? = live[name] else { return false }
+        return true
+    }
+
+    /// Why no new workspace may start on the profile: its saved proxy isn't the one its store has in this run.
+    static func pending(_ name: String) -> String? {
+        guard let route = live[name], route != savedRoute(name) else { return nil }
+        return "profile \(name)'s proxy changed after it was opened in this run and applies when agweb next starts (the person "
+            + "restarts it); until then it keeps \(describe(route)), so new workspaces on it are refused. Use another profile meanwhile"
+    }
+
+    /// For a failed load's error: the route the profile's pages take.
+    static func routeNote(_ name: String) -> String? {
+        guard let route = live[name] else { return nil }
+        let pendingNote = route != savedRoute(name) ? "; the proxy saved since applies when agweb next starts" : ""
+        switch route {
+        case .direct: return pendingNote.isEmpty ? nil : "profile \(name) has no proxy in this run" + pendingNote
+        case .proxy(let spec): return "profile \(name) goes through proxy \(spec)" + pendingNote
+        case .unreadable: return refusal(name)
+        }
+    }
+
+    private static func describe(_ route: Route) -> String {
+        switch route {
+        case .direct: "loading direct"
+        case .proxy(let spec): "going through \(spec)"
+        case .unreadable: "loading nothing"
+        }
+    }
+
+    /// `profile list`'s note: the saved proxy, and the route this run keeps when they differ.
+    static func proxyNote(_ name: String) -> String? {
+        let saved = savedRoute(name)
+        var note: String? = switch saved {
+        case .direct: nil
+        case .proxy(let spec): "proxy \(spec)" + (spec.password == nil ? "" : ", password saved")
+        case .unreadable: proxiesFileReadable ? "proxy unreadable in profiles/proxies.json, so it loads nothing" : "profiles/proxies.json unreadable, so it loads nothing"
+        }
+        if let route = live[name], route != saved {
+            note = (note ?? "no proxy") + " from agweb's next start; now \(describe(route))"
+        }
+        return note
+    }
+
+    /// Saves the profile's proxy (nil: none), registering a new name. When the profile was opened in this run, the
+    /// change waits for the next start: then the route it keeps meanwhile.
+    static func setProxy(_ name: String, _ spec: ProxySpec?) throws -> String? {
+        try locked {
+            let data = FileManager.default.fileExists(atPath: proxiesFile.path) ? try Data(contentsOf: proxiesFile) : nil
+            // The proxy first: a name registered without it would load direct.
+            try writePrivately(try ProxyRegistry.setting(name, to: spec, in: data), to: proxiesFile)
+            guard update({ $0.contains(name) ? $0 : $0 + [name] }) else {
+                throw Failure("profiles/profiles.json can't be read, so \(name) isn't registered; its proxy is saved")
+            }
+        }
+        guard let route = live[name], route != savedRoute(name) else { return nil }
+        return describe(route)
     }
 
     /// The person's instance keeps WebKit's own place for named stores. Any other root keeps them in its folder, so
@@ -254,7 +374,7 @@ enum Profiles {
     }
 
     static func delete(_ name: String) async throws {
-        guard names.contains(name) else { throw Failure("no profile \(name); see agweb profile-list") }
+        guard names.contains(name) else { throw Failure("no profile \(name); see agweb profile list") }
         if let fd = inUse.removeValue(forKey: name) { close(fd) }
         let probe = open(inUseFile(name).path, O_CREAT | O_RDWR, 0o600)
         defer { if probe >= 0 { close(probe) } }
@@ -279,7 +399,13 @@ enum Profiles {
         restoring[name] = nil
         try? FileManager.default.removeItem(at: sessionCookies(name))
         try? FileManager.default.removeItem(at: inUseFile(name))
-        update { $0.filter { $0 != name } }
+        locked {
+            _ = update { $0.filter { $0 != name } }
+            // An unreadable file stays as it is; it already keeps every profile from loading.
+            if let data = try? Data(contentsOf: proxiesFile), let without = try? ProxyRegistry.setting(name, to: nil, in: data) {
+                try? writePrivately(without, to: proxiesFile)
+            }
+        }
     }
 
     // Cookies without an expiry die with the app in every browser that doesn't restore sessions, and SSO logins
@@ -371,14 +497,35 @@ enum Profiles {
         return digest.withUnsafeBufferPointer { NSUUID(uuidBytes: $0.baseAddress!) as UUID }
     }
 
-    /// Locked: two read-modify-writes at once lose a name.
-    private static func update(_ change: ([String]) -> [String]) {
+    /// Two read-modify-writes at once, from this instance or another on the root, would lose a name or a proxy.
+    private static func locked<T>(_ body: () throws -> T) rethrows -> T {
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let lock = open(file.path + ".lock", O_CREAT | O_RDWR, 0o600)
         defer { if lock >= 0 { close(lock) } }
         if lock >= 0 { flock(lock, LOCK_EX) }
-        try? JSONEncoder().encode(change(names).sorted()).write(to: file, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        return try body()
+    }
+
+    /// Inside `locked`. False, writing nothing, when the file exists but can't be read: rewriting it from no names would
+    /// leave only the one being added, and the next launch would sweep every other profile's data.
+    private static func update(_ change: ([String]) -> [String]) -> Bool {
+        let current = FileManager.default.fileExists(atPath: file.path) ? readNames() : []
+        guard let current, let data = try? JSONEncoder().encode(change(current).sorted()) else { return false }
+        return (try? writePrivately(data, to: file)) != nil
+    }
+
+    /// Created 0600 before anything is written (proxies.json holds passwords), then renamed over the file.
+    private static func writePrivately(_ data: Data, to url: URL) throws {
+        let temporary = url.path + ".tmp"
+        unlink(temporary)
+        let fd = open(temporary, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        guard fd >= 0 else { throw Failure("cannot write \(url.lastPathComponent)") }
+        let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        close(fd)
+        guard written == data.count, rename(temporary, url.path) == 0 else {
+            unlink(temporary)
+            throw Failure("cannot write \(url.lastPathComponent)")
+        }
     }
 }
 
@@ -511,7 +658,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             // A tab reopened at launch loads before any command: it too waits for last time's ad-blocking rules.
             initialLoad = Task {
                 await AdBlock.shared.loading?.value
-                if await self.load(url) { try await self.waitForLoad() }
+                if try await self.load(url) { try await self.waitForLoad() }
             }
         }
         guard let task = initialLoad else { return }
@@ -521,7 +668,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     /// A tab opened behind the current one: a command that later selects it waits for this load like a reopened tab's.
     func loadInBackground(_ url: URL) {
-        initialLoad = Task { if await self.load(url) { try await self.waitForLoad() } }
+        initialLoad = Task { if try await self.load(url) { try await self.waitForLoad() } }
     }
 
     /// A closed tab: a load waiting on the cookie restore must not start in its detached web view.
@@ -541,7 +688,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             try? await Task.sleep(for: .milliseconds(100))
             return
         }
-        guard await load(url) else { return }
+        guard try await load(url) else { return }
         try await waitForLoad()
         // A page that sends itself on by script (an SPA's SSO check) starts that navigation just after loading;
         // wait for it, so the reply shows where the agent really is.
@@ -563,7 +710,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     /// Every first load goes through here, so a profile's saved session cookies are back before any page asks.
     /// False when a later load replaced this one while the cookies were coming back.
     @discardableResult
-    func load(_ url: URL) async -> Bool {
+    func load(_ url: URL) async throws -> Bool {
+        if let refusal = Profiles.refusal(workspace.profile) { throw Failure(refusal) }
         loadGeneration += 1
         let generation = loadGeneration
         if let profile = workspace.profile { await Profiles.restoreSessionCookies(profile) }
@@ -760,11 +908,18 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         }
         // As Playwright's does, the error names the URL that failed, which after a redirect is not the one asked for.
         let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
-        if isExpected(navigation) { finishLoad(Failure("navigation failed: \(error.localizedDescription)" + (url.map { " at \($0)" } ?? ""))) }
+        guard isExpected(navigation) else { return }
+        let note = workspace.profile.flatMap(Profiles.routeNote)
+        // What a proxy answers to missing or wrong credentials; WebKit's text names no proxy.
+        let reason = (error as NSError).code == NSURLErrorUserAuthenticationRequired && Profiles.proxied(workspace.profile)
+            ? "the proxy asked for a username and password, or refused the saved ones" : error.localizedDescription
+        finishLoad(Failure("navigation failed: \(reason)" + (url.map { " at \($0)" } ?? "") + (note.map { " (\($0))" } ?? "")))
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        // Loopback, link-local and the Mac's own addresses skip the blackhole proxy an unreadable one gets.
+        if Profiles.refusal(workspace.profile) != nil { return decisionHandler(.cancel) }
         // A popup gets its opener's action again; only the tab the link was in opens it elsewhere.
         if Self.opensInBackground(navigationAction), navigationAction.sourceFrame.webView === webView,
            let url = navigationAction.request.url, let browser {

@@ -113,7 +113,7 @@ extension MainWindow: NSToolbarDelegate, NSTextFieldDelegate, NSToolbarItemValid
         case #selector(NSResponder.insertNewline(_:)):
             guard let tab = model.displayedTab, let url = Address.typed(urlField.stringValue) else { return true }
             tab.markUsed()
-            Task { await tab.load(url) }
+            Task { _ = try? await tab.load(url) }
             window.makeFirstResponder(tab.webView)
             return true
         case #selector(NSResponder.cancelOperation(_:)):

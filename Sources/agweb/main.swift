@@ -87,8 +87,14 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 the person asks for all of them. To clean up your own: agweb -w NAME close
   dashboard [--hide]            show (or hide) every tab at once in the window, as the person's ⌘D does;
                                 --filename=grid.png also saves a picture of it
-  profile-list                  named profiles and the workspaces using them
-  profile-delete <name>         delete a named profile and everything it stored
+  profile [list]                named profiles, the workspaces using them and their proxies (never a password)
+  profile set <name> proxy <url>  the profile's pages, fetch, WebSockets and downloads go through socks5://, http:// or
+                                https:// [user[:password]@]host:port; --secret-cmd/--secret-file keep the password out
+                                of your transcript. If the proxy is down or refuses, loads fail, never go direct;
+                                localhost, this Mac's own addresses and WebRTC skip it (a page can learn the real IP).
+                                Set it before the profile's first open in a run, or it applies at agweb's next start
+  profile set <name> proxy off  no proxy
+  profile delete <name>         delete a named profile and everything it stored
   passkey [list]                the passkeys agweb holds for this workspace's profile (in memory for a fresh one); a
                                 site's passkey sign-up or sign-in in this workspace uses them with no prompt
   passkey delete <id>           forget one an agent made (the site still lists it until removed there)
@@ -170,6 +176,11 @@ if options["instant"] == nil, env["AGWEB_INSTANT"].map({ !$0.isEmpty }) == true 
 // eval's other name: some agent sandboxes refuse any shell command containing the word eval.
 if positional.first == "js" { positional[0] = "eval" }
 if positional.first == "tree" { positional[0] = "list" }
+// The old names: profile-list, profile-delete.
+for i in [0, 1] where positional.count > i && positional[i].hasPrefix("profile-") && (i == 0 || positional[0] == "help") {
+    positional.insert(String(positional[i].dropFirst("profile-".count)), at: i + 1)
+    positional[i] = "profile"
+}
 /// One command's lines of the usage: its own line and the indented lines continuing it.
 func commandHelp(_ name: String) -> String? {
     var out: [String] = [], taking = false
@@ -267,13 +278,35 @@ func secret(command: String?, file: String?) -> String {
     return value
 }
 
+let settingProxy = command == "profile" && args.first == "set" && args.count == 4 && args[2] == "proxy" && args[3] != "off"
 if options["secret-cmd"] != nil || options["secret-file"] != nil {
     let command = options.removeValue(forKey: "secret-cmd"), file = options.removeValue(forKey: "secret-file")
-    guard positional.first == "fill" else { fail("--secret-cmd and --secret-file work with fill") }
+    guard positional.first == "fill" || settingProxy else { fail("--secret-cmd and --secret-file work with fill and profile set <name> proxy <url>") }
     guard command == nil || file == nil else { fail("use --secret-cmd or --secret-file, not both") }
-    guard positional.count == 2 else { fail("use: agweb fill <target> --secret-cmd CMD | --secret-file PATH (no text)") }
-    args.append(secret(command: command, file: file))
-    options["secret"] = ""
+    if settingProxy {
+        options["proxy-password"] = secret(command: command, file: file)
+    } else {
+        guard positional.count == 2 else { fail("use: agweb fill <target> --secret-cmd CMD | --secret-file PATH (no text)") }
+        args.append(secret(command: command, file: file))
+        options["secret"] = ""
+    }
+}
+// The password travels as an option, never in the arguments, which the app's command log keeps.
+if settingProxy {
+    var spec: ProxySpec
+    do { spec = try ProxySpec.parse(args[3]) } catch { fail("\(error)") }
+    if let inline = spec.password {
+        guard options["proxy-password"] == nil else { fail("the proxy URL has a password and --secret-cmd/--secret-file gives another; use one") }
+        options["proxy-password"] = inline
+        spec.password = nil
+    }
+    spec.password = options["proxy-password"]
+    do { try spec.validate() } catch { fail("\(error)") }
+    spec.password = nil
+    args[3] = spec.description
+} else if command == "profile", args.contains(where: { $0.contains("://") && $0.contains("@") }) {
+    // Mistyped: the app's reply or its command log would show the password.
+    fail("use: agweb profile set <name> proxy <url> (the URL's password stays out of every reply)")
 }
 
 let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")

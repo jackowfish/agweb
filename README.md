@@ -16,6 +16,7 @@ Idle tabs are suspended: on my Mac five open pages sit at 0% CPU, where Chrome's
 - **You can always see it.** The dashboard (⌘D) shows every tab of every agent at once, live, with each agent's last command. And it is always a real window: some sites block headless browsers, and headless leaves you guessing what went wrong.
 - **Many agents at once.** Each agent works in its own workspace with its own tabs, grouped by agent in the sidebar.
 - **Log in once.** A named profile (`-p work`) keeps its logins and is shared by every agent using it, at the same time.
+- **A proxy per profile.** SOCKS5, HTTP or HTTPS: `agweb profile set work proxy socks5://user:password@host:1080`.
 - **Light.** Idle tabs are throttled and then suspended, so open pages cost almost nothing once nobody uses them.
 - **Acts like a person.** Clicks and keys are native macOS events, and the pointer moves like a hand, so hover menus and drag-and-drop work.
 - **Made for agents.** Snapshots give each element a ref that lasts while it is on the page. `snapshot --diff` and `find` show only what matters, and every action reports what it changed.

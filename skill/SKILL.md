@@ -40,7 +40,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 **Logging in, reusing a profile.** Logins, cookies and localStorage of `-p NAME` persist and are shared by every workspace naming it, in parallel.
 
 ```sh
-agweb profile-list # existing profiles; the project's notes may name one
+agweb profile list # existing profiles and their proxies; the project's notes may name one
 agweb -w task open -p work https://app.example.com # lands logged in if the profile has been used before
 agweb -w task fill 'role=textbox[name="Email"]' "$EMAIL" # credentials come from the project (pass, env), never from you
 agweb -w task fill 'role=textbox[name="Password"]' --secret-cmd 'pass show site' # never "$(pass show site)": that puts it in your transcript
@@ -49,6 +49,8 @@ agweb -w task ask "Please sign in, then click Done" --url=/dashboard # no creden
 ```
 
 The profile is fixed at `open`: `close`, then `open -p`. `--secret-cmd CMD` (`pass show site`, `op read op://vault/site/password`, `bw get password site`) and `--secret-file PATH` take the first line; the value shows as `<hidden>` in every reply.
+
+Proxy: `agweb profile set work proxy socks5://user@host:1080 --secret-cmd 'pass show proxy'` (or `http://`, `https://`; `off` removes it). Set it before the profile's first `open`, or it waits for agweb's restart (the person's call). Nothing goes direct, but WebRTC leaks the real IP.
 
 Passkeys: a site's passkey sign-up or sign-in button works with no prompt (Events: `passkey created for ...`). They are agweb's own, per profile: use `-p` for an account you'll come back to (a fresh workspace's go at `close`). agweb can't use the person's Apple Passwords or 1Password passkeys: for an account that has only those, `ask` the person to sign in, then add an agweb passkey in the account's security settings. `agweb -w task passkey list` lists the profile's passkeys; `passkey delete <id>` deletes one an agent made.
 
