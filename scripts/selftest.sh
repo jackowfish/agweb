@@ -956,7 +956,10 @@ check "the workspace clipboard is empty" -w cbq clipboard
 check "Page" -w cbq eval "() => { document.body.append(Object.assign(document.createElement('input'), { id: 'k' })) }"
 check "Page" -w cbq click '#k'
 for key in End Escape Tab Meta+z; do check "Page" -w cbq press $key; done
-check '^no gesture$' -w cbq --raw clipboard
+# A timer's write may land in the workspace clipboard here or be refused: WebKit takes the page's user activation
+# away after the script agweb runs after each key. Either way it must not reach the person's (checked at the end).
+out=$("$agweb" -w cbq --raw clipboard 2>&1)
+case "$out" in "no gesture"|*"clipboard is empty"*) printf 'ok    a timer write after agent keys stays off the person'"'"'s clipboard\n' ;; *) fail "a timer write after agent keys: $out" ;; esac
 check "workspace cbq closed" -w cbq close
 }
 lanes="$lanes cbq"
