@@ -56,6 +56,7 @@ Agent actions never activate the app, raise or focus its window, or pop anything
 - WebKit numbers the middle button 4 in `WKNavigationAction.buttonNumber`, and opens nothing on a middle click by itself.
 - App Nap throttles agweb in the background (a `goto` took 0.75 s instead of 0.37 s): `Browser.handle` and a recording hold a latency-critical user-initiated activity; idle pages may still nap.
 - A reopened tab's sessionStorage is saved by script and put back by a document-start user script, before the page's own scripts read it.
+- A WKWebView's page and its web content process run as long as anything holds the view, and the sidebar's SwiftUI rows keep closed tabs for minutes; a script still waiting on the page holds the view too, through `withTimeout`'s task, so a timed-out `eval` kept its page forever. `closeTab` therefore ends the page with the `_close` SPI; a pending script then fails at once only when the process ends with the page (a popup sharing its opener's process waits out its timeout). `launchctl print pid/<app pid>` lists an instance's own WebContent processes.
 
 ## Storage
 

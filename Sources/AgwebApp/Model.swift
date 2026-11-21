@@ -670,6 +670,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored private var loadWaiter: CheckedContinuation<Void, Error>?
     @ObservationIgnored private var initialLoad: Task<Void, Error>?
     @ObservationIgnored private var loadGeneration = 0
+    /// `closePage` ran: WebKit fails a script still waiting on the page with an unrelated error.
+    @ObservationIgnored private(set) var closed = false
     /// The navigation `load` started; another one ending (the page it replaced) doesn't end the wait.
     @ObservationIgnored private var expected: WKNavigation?
     @ObservationIgnored private var loadTimeout: Task<Void, Never>?
@@ -741,6 +743,16 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         initialLoad = nil
         // A display queued just before (a restored tab closed at launch) would load it in the detached view.
         pendingURL = nil
+    }
+
+    /// Ends the page and lets its web content process go, as a browser closing a tab does. Without it the page
+    /// runs on while anything still holds the web view: the sidebar's SwiftUI rows keep closed tabs for minutes.
+    func closePage() {
+        closed = true
+        let selector = NSSelectorFromString("_close")
+        guard webView.responds(to: selector) else { return }
+        typealias Close = @convention(c) (AnyObject, Selector) -> Void
+        unsafeBitCast(webView.method(for: selector), to: Close.self)(webView, selector)
     }
 
     func goto(_ url: URL) async throws {
@@ -1176,11 +1188,13 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         let info = (frame ?? (arguments["target"] as? String).flatMap { frameRefs[$0] })?.info
         var arguments = arguments
         if arguments["refSeed"] == nil { arguments["refSeed"] = workspace.refSeed }
-        return try await withTimeout(timeout, "page script") { [webView, arguments, workspace] in
+        return try await withTimeout(timeout, "page script") { [webView, arguments, workspace, weak self] in
             try await withCheckedThrowingContinuation { continuation in
                 webView.callAsyncJavaScript(body, arguments: arguments, in: info, in: world) { result in
                     switch result {
                     case .success(let value): continuation.resume(returning: value as? String ?? "\(value)")
+                    case .failure where MainActor.assumeIsolated({ self?.closed != false }):
+                        continuation.resume(throwing: Failure("the tab was closed"))
                     case .failure(let error as WKError) where error.code == .javaScriptInvalidFrameTarget:
                         continuation.resume(throwing: Failure("\((arguments["target"] as? String).map { "ref \($0) not found: " } ?? "")"
                                                               + "its frame reloaded or closed; take a new snapshot"))

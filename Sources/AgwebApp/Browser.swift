@@ -165,6 +165,7 @@ final class Browser {
         // Its handlers hold the console sink; a workspace's own controller is cleaned up with the workspace.
         tab.ownController?.removeAllScriptMessageHandlers()
         mainWindow.remove(tab.webView)
+        tab.closePage()
         workspace.tabs.remove(at: index)
         tab.thumbnailTask?.cancel()
         tab.commandPictures?.cancel()
