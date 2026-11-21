@@ -1048,6 +1048,8 @@ check "dashboard shown" dashboard
 check "Page" -w aged open "$u?aged"
 check "Page" -w kept open "$u?keep1"
 check "keep2" -w kept tab-new "$u?keep2"
+printf '<title>Saved title</title>' >"$dir/titled.html"; printf '<p>no title' >"$dir/untitled.html"
+check "Saved title" -w titled open "http://localhost:$port/titled.html"
 check "recording" -w beta video-start "$dir/quit.mp4"
 check "quit.mp4" quit
 LC_ALL=C grep -qa moov "$dir/quit.mp4" || fail "quit left the video without its index"
@@ -1074,6 +1076,9 @@ check '"tok2"' -w beta eval "sessionStorage.getItem('access_token')"
 check "index.html?again" -w beta goto "$u?again"
 check 'sso=1' -w beta eval 'document.cookie'
 check '\["tok1","L"\]' -w beta eval "[sessionStorage.getItem('access_token'), sessionStorage.getItem('late')]"
+# A reopened tab shows its saved title only until its page commits, a page without a title included.
+lacks "Saved title" -w titled goto "http://localhost:$port/untitled.html"
+check "workspace titled closed" -w titled close
 # selftest-px's proxy, turned off in the last run, applies now: the page goes direct (the proxy is gone too, so only
 # the missing proxy line tells them apart). A new query: the page itself is in WebKit's cache.
 fails "navigation failed" -w px goto "$proxied?restarted"

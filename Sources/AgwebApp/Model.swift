@@ -878,6 +878,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         commits += 1
+        // A reopened tab starts with its saved title; on a page with none, the title never changes, so KVO never fires.
+        title = webView.title ?? ""
         // Input given to the last page is not this one's: it can't use the clipboard until it gets some.
         agentInputAt = .distantPast
         personInputAt = .distantPast
