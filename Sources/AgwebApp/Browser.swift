@@ -334,8 +334,6 @@ final class Browser {
                     captureAfterCommand(tab)
                     Task { await tab.captureSession() }
                 }
-                // A click, fill or script may have moved the caret since the last key: the saved one is stale.
-                if Self.caretCommands.contains(request.command) { workspace.actedOn?.caretKept = false }
                 workspace.actedOn = nil
                 updateVisibility()
             }
@@ -374,6 +372,11 @@ final class Browser {
                 }
             }
             response = Response(ok: false, output: Self.hide(secrets, in: "Error: " + message))
+        }
+        // A fill or script may have moved a rich editor's caret: kept as it left it, for the next key (another tab taking
+        // the keyboard meanwhile would make WebKit put it at the start).
+        if Self.caretCommands.contains(request.command), let tab = model.workspaces.first(where: { $0.name == request.workspace })?.actedOn {
+            tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
         }
         #if AGWEB_COMMAND_LOG
         CommandLogFile.append(request, response, started: started)
@@ -1024,8 +1027,7 @@ final class Browser {
         return describe(tab)
     }
 
-    /// Commands that can move a page's caret, so the one kept after the agent's last key no longer holds (reading
-    /// ones, snapshot or wait, leave it).
+    /// Commands that can move a page's caret: it is kept again after them (reading ones, snapshot or wait, leave it).
     /// (A mouse press decides it itself, withMouse.)
     static let caretCommands: Set<String> = ["fill", "select", "eval", "js", "goto", "open", "reload", "go-back", "go-forward",
                                              "tab-select", "tab-new", "tab-close", "state-load"]
@@ -1671,27 +1673,16 @@ final class Browser {
         }
     }
 
-    /// A press into a field makes WebKit give the tab the keyboard (the window's first responder), from whoever had
-    /// it: the person typing in another tab or the address field, or another agent's tab mid-word. So a press waits
-    /// its turn like a key, keeps the caret it set in a rich editor for the next key (taking the keyboard back puts it
-    /// at the start), and hands the keyboard back.
+    /// A press into a field makes WebKit give the tab the keyboard (the window's first responder), from another agent's
+    /// tab mid-word: so a press waits its turn like a key. The tab keeps the keyboard after (a page's clipboard call the
+    /// click started needs it), with the caret it set in a rich editor kept for the next key: taking the keyboard back
+    /// after another tab had it puts the caret at the start.
     private func withMouse(_ tab: Tab, _ body: () async throws -> Void) async throws {
         try await withKeyboard(tab) {
-            let window = mainWindow.window
-            var previous = window.firstResponder
-            if let editor = previous as? NSTextView, editor.isFieldEditor { previous = editor.delegate as? NSResponder }
-            if previous is WKWebView { previous = model.displayedTab?.webView }
             var failure: Error?
             do { try await body() } catch { failure = error }
-            // A press into a field asks for the keyboard from the page's process: an answer from the page comes after it.
-            _ = try? await tab.call("return ''", timeout: 2)
-            if window.firstResponder === tab.webView, let previous, previous !== tab.webView {
-                tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
-                handBack(to: previous)
-            } else if window.firstResponder === tab.webView {
-                // The tab had the keyboard already: the caret the press set stays live, and the one kept before is stale.
-                tab.caretKept = false
-            }
+            // A press into a field asks for the keyboard from the page's process: the save's answer comes after it.
+            tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
             if let failure { throw failure }
         }
     }

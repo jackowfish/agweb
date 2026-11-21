@@ -1110,8 +1110,11 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
         guard isExpected(navigation) else { return }
         let note = workspace.profile.flatMap(Profiles.routeNote)
-        // What a proxy answers to missing or wrong credentials; WebKit's text names no proxy.
-        let reason = (error as NSError).code == NSURLErrorUserAuthenticationRequired && Profiles.proxied(workspace.profile)
+        // What a proxy answers to missing or wrong credentials; WebKit's text names no proxy. macOS 15 reports it as
+        // POSIX EAUTH ("Authentication error").
+        let nsError = error as NSError
+        let refused = nsError.code == NSURLErrorUserAuthenticationRequired || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EAUTH))
+        let reason = refused && Profiles.proxied(workspace.profile)
             ? "the proxy asked for a username and password, or refused the saved ones" : error.localizedDescription
         finishLoad(Failure("navigation failed: \(reason)" + (url.map { " at \($0)" } ?? "") + (note.map { " (\($0))" } ?? "")))
     }
