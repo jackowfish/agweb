@@ -19,6 +19,8 @@ final class MainWindow: NSObject, NSWindowDelegate {
     var findTabID: Int?
     private lazy var dashboard = NSHostingView(rootView: DashboardView(model: model))
     let dashboardButton = NSButton()
+    /// Tab views in `container`.
+    private var hosts = 0
     private let placeholder = NSTextField(labelWithString: "No tabs yet.\nAgents: agweb -w <task> open <url>    You: ⌘T")
 
     init(model: BrowserModel) {
@@ -102,6 +104,9 @@ final class MainWindow: NSObject, NSWindowDelegate {
         webView.autoresizingMask = [.width, .height]
         host.addSubview(webView)
         container.addSubview(host, positioned: .above, relativeTo: placeholder)
+        hosts += 1
+        // Hidden while any tab exists: a tab hidden in a covered window would otherwise show it as the window comes back.
+        placeholder.isHidden = true
     }
 
     private static let askBar = NSUserInterfaceItemIdentifier("ask")
@@ -150,8 +155,10 @@ final class MainWindow: NSObject, NSWindowDelegate {
     func isHidden(_ webView: WKWebView) -> Bool { webView.superview?.isHidden ?? false }
 
     func remove(_ webView: WKWebView) {
+        if webView.superview != nil { hosts -= 1 }
         webView.superview?.removeFromSuperview()
         webView.removeFromSuperview()
+        placeholder.isHidden = hosts > 0
     }
 
     func bringToTop(_ webView: WKWebView) {

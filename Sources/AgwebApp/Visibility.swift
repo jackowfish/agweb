@@ -5,12 +5,14 @@ import WebKit
 // under the displayed one all count as visible, so every covered page animated and painted at full rate. A tab is
 // shown only while it is displayed, its agent's command runs on it, it is being recorded, a key or button is held in
 // it, or for a while after the agent's last command on it (toggling around every command would refetch on each
-// visibilitychange).
+// visibilitychange). The displayed tab counts only while some of the window can be seen (a second display counts):
+// covered by another app's window, minimized or on another Space, nobody sees it, so it is hidden and WebKit
+// throttles and later suspends it like any other, but stays unmuted: the person's music goes on behind another app.
 extension Browser {
     static let awakeAfterCommand = Double(ProcessInfo.processInfo.environment["AGWEB_AWAKE_SECONDS"] ?? "") ?? 30
 
     func needsVisible(_ tab: Tab) -> Bool {
-        if model.displayedTabID == tab.id, !model.dashboardOpen { return true }
+        if isDisplayed(tab), windowSeen { return true }
         let workspace = tab.workspace
         guard workspace.currentID == tab.id else { return false }
         // A drag or a held Shift spans commands; a page seeing hidden mid-drag cancels it.
@@ -24,7 +26,7 @@ extension Browser {
         for tab in model.workspaces.lazy.flatMap(\.tabs) {
             let needed = needsVisible(tab), capturing = tab.liveCaptures > 0
             setHidden(tab, !needed && !capturing)
-            if tab.workspace.name != Self.userWorkspace { tab.setMuted(!needed) }
+            if tab.workspace.name != Self.userWorkspace { tab.setMuted(!needed && !isDisplayed(tab)) }
         }
     }
 
@@ -45,10 +47,29 @@ extension Browser {
     /// suspended. The person's own tabs keep playing, as in any browser.
     private func setHidden(_ tab: Tab, _ hidden: Bool) {
         guard mainWindow.isHidden(tab.webView) != hidden else { return }
-        if hidden { captureThumbnail(tab) }
+        let window = mainWindow.window
+        if hidden {
+            captureThumbnail(tab)
+            if isDisplayed(tab), !windowSeen {
+                coveredResponder = (window.firstResponder as? NSView).flatMap { $0.isDescendant(of: tab.webView) ? $0 : nil }
+            }
+        }
         mainWindow.setHidden(tab.webView, hidden)
-        if tab.workspace.name != Self.userWorkspace { tab.setMuted(hidden) }
+        // Hiding dropped the person's focus in the page; it comes back as the tab shows again (uncovered, or woken for a
+        // command, whose keys would otherwise hand focus back to the window and blur the page after each one), unless
+        // they have since focused something else.
+        if !hidden, isDisplayed(tab), let responder = coveredResponder, responder.isDescendant(of: tab.webView) {
+            coveredResponder = nil
+            if window.firstResponder == nil || window.firstResponder === window {
+                window.makeFirstResponder(responder)
+                releaseSecureInput()
+            }
+        }
+        if tab.workspace.name != Self.userWorkspace { tab.setMuted(hidden && !isDisplayed(tab)) }
     }
+
+    /// Shown in the window, whether or not anyone can see the window.
+    private func isDisplayed(_ tab: Tab) -> Bool { model.displayedTabID == tab.id && !model.dashboardOpen }
 
     /// AgentWindow reports key while agweb is in the background, so a password field focused there by an agent, a
     /// page or the person before they switched away turns on secure input as in the front window: every event tap on

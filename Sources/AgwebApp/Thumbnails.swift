@@ -46,7 +46,7 @@ extension Browser {
     func captureAfterCommand(_ tab: Tab) {
         guard model.dashboardOpen else { return }
         // Commands back to back would cancel every chain before its first picture: one now, at most each second.
-        if dashboardSeen, Date().timeIntervalSince(tab.thumbnailAt) > 1 {
+        if windowSeen, Date().timeIntervalSince(tab.thumbnailAt) > 1 {
             // Stamped at the request: commands faster than a snapshot must not each start one.
             tab.thumbnailAt = Date()
             captureThumbnail(tab, save: false)
@@ -60,7 +60,7 @@ extension Browser {
                 waited = at
                 guard !Task.isCancelled, let tab, tab.workspace.tabs.contains(where: { $0 === tab }), model.dashboardOpen else { return }
                 // Mid-command (one that touches no page, like `tab-list`) or out of sight: skip this one, not the rest.
-                if !tab.workspace.busy, dashboardSeen, Date().timeIntervalSince(tab.thumbnailAt) > 0.5 { captureThumbnail(tab, save: false) }
+                if !tab.workspace.busy, windowSeen, Date().timeIntervalSince(tab.thumbnailAt) > 0.5 { captureThumbnail(tab, save: false) }
             }
         }
     }
@@ -78,7 +78,7 @@ extension Browser {
                 guard !Task.isCancelled, let tab, tab.workspace.tabs.contains(where: { $0 === tab }) else { return }
                 guard !tab.webView.isLoading else { continue }
                 // A tab held awake after a command loads under an open dashboard too.
-                if mainWindow.isHidden(tab.webView) { captureThumbnail(tab) } else if model.dashboardOpen, dashboardSeen { captureThumbnail(tab, save: false) }
+                if mainWindow.isHidden(tab.webView) { captureThumbnail(tab) } else if model.dashboardOpen, windowSeen { captureThumbnail(tab, save: false) }
             }
         }
     }

@@ -17,7 +17,7 @@ extension Browser {
         dashboardObserver = nil
         // Before the dashboard hides the displayed tab, which then gets its own picture as it goes hidden; one an agent
         // keeps awake, or one capturing, stays shown, so it is taken here.
-        if open, dashboardSeen {
+        if open, windowSeen {
             let hiding = model.displayedTab.flatMap { needsVisible($0) || $0.liveCaptures > 0 ? nil : $0.id }
             captureAwake(but: hiding)
         }
@@ -28,20 +28,20 @@ extension Browser {
         dashboardObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
                                                                    object: mainWindow.window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.model.dashboardOpen, self.dashboardSeen else { return }
+                guard let self, self.model.dashboardOpen, self.windowSeen else { return }
                 // Tabs that changed while nobody could see them; again a moment later for one WebKit wakes only now.
                 self.captureAwake(but: nil)
                 self.dashboardNap?.cancel()
                 self.dashboardRetake?.cancel()
                 self.dashboardRetake = Task {
                     try? await Task.sleep(for: .seconds(1))
-                    if !Task.isCancelled, self.model.dashboardOpen, self.dashboardSeen { self.captureAwake(but: nil) }
+                    if !Task.isCancelled, self.model.dashboardOpen, self.windowSeen { self.captureAwake(but: nil) }
                 }
             }
         }
         dashboardTask = Task { [weak self] in
             while !Task.isCancelled, let self {
-                if self.dashboardSeen {
+                if self.windowSeen {
                     self.model.dashboardNow = Date()
                     if Settings.store.bool(forKey: Settings.showUsage) {
                         self.model.processes = self.usageSampler.sample()
@@ -51,7 +51,7 @@ extension Browser {
                 }
                 // A first sample (after a wait) has no CPU: the next comes half a second later.
                 let noCPU = self.model.processes.values.contains { $0.usage.cpu == nil }
-                let seconds = self.dashboardSeen ? (noCPU ? 0.5 : 5.0) : 3600
+                let seconds = self.windowSeen ? (noCPU ? 0.5 : 5.0) : 3600
                 let nap = Task { _ = try? await Task.sleep(for: .seconds(seconds)) }
                 self.dashboardNap = nap
                 await nap.value
@@ -60,7 +60,7 @@ extension Browser {
     }
 
     /// Some of the window is on a screen that is on: a second display counts, a covered window or another Space doesn't.
-    var dashboardSeen: Bool { mainWindow.window.occlusionState.contains(.visible) }
+    var windowSeen: Bool { mainWindow.window.occlusionState.contains(.visible) }
 
     /// What a dashboard tile says the agent did last; never the text it typed, filled or evaluated.
     static func summary(_ request: Request) -> String {

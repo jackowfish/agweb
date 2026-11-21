@@ -20,6 +20,8 @@ final class Browser {
     var dashboardNap: Task<Void, Never>?
     var dashboardObserver: NSObjectProtocol?
     var dashboardRetake: Task<Void, Never>?
+    /// What had the person's focus in the displayed tab when the window was covered (Visibility.swift).
+    weak var coveredResponder: NSView?
     let usageSampler = UsageSampler()
 
     /// Tabs a person opens from the window, when no agent tab is displayed, live in this workspace.
@@ -40,6 +42,13 @@ final class Browser {
             self.scheduleSave()
         }
         model.onDashboard = { [weak self] open in self?.dashboardChanged(open) }
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let window = note.object as? NSWindow, window === self.mainWindow.window else { return }
+                // Covered or uncovered: the displayed tab hides or shows (Visibility.swift).
+                self.updateVisibility()
+            }
+        }
         let check = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.releaseSecureInput() } }
         check.tolerance = 0.1
         // The person's switch away leaves no half second. Again on the next turn, in case WebKit's own update on the
