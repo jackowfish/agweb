@@ -1210,9 +1210,21 @@ lanes="$lanes proxy"
 
 mkdir -p "$dir/lanes"
 pids=
-for name in $lanes; do
-    ( failures=0; began=$(date +%s); "lane_$name"; echo "$failures" >"$dir/lanes/$name.fail"; echo "$(($(date +%s) - began))" >"$dir/lanes/$name.secs" ) >"$dir/lanes/$name.out" 2>&1 &
+# At most AGWEB_SELFTEST_LANES lanes at once (default: all; on CI, the runner's cores: its 3 cores stretch every
+# command, and checks timed against a page's timers fail): each of that many groups runs its lanes one after another.
+max=${AGWEB_SELFTEST_LANES:-$([ -n "${AGWEB_CI:-}" ] && sysctl -n hw.ncpu || echo 1000)}
+n=0
+for name in $lanes; do eval "group_$((n % max))=\"\${group_$((n % max)):-} $name\""; n=$((n + 1)); done
+g=0
+while [ "$g" -lt "$max" ] && [ "$g" -lt "$n" ]; do
+    eval "names=\$group_$g"
+    (
+        for name in $names; do
+            ( failures=0; began=$(date +%s); "lane_$name"; echo "$failures" >"$dir/lanes/$name.fail"; echo "$(($(date +%s) - began))" >"$dir/lanes/$name.secs" ) >"$dir/lanes/$name.out" 2>&1
+        done
+    ) &
     pids="$pids $!"
+    g=$((g + 1))
 done
 # Not a bare wait: the test server runs in the background too.
 wait $pids
