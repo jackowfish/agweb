@@ -14,6 +14,8 @@ final class BrowserModel {
     }
     /// agweb's processes and their usage, sampled while the dashboard is open with Settings ▸ CPU and memory on.
     var processes: [pid_t: (name: String, usage: Usage)] = [:]
+    /// The dashboard's clock for "N s ago", advanced with the usage figures every 5 s.
+    var dashboardNow = Date()
     @ObservationIgnored var onDashboard: ((Bool) -> Void)?
     /// The tab's id, and whether showing it counts as use (Tab.lastUsed): not a fallback after a close, nor the launch.
     @ObservationIgnored var onDisplay: ((Int, Bool) -> Void)?
@@ -585,6 +587,14 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     var title = ""
     /// The dashboard's picture of the tab, and when an agent last acted on it (its place there).
     var thumbnail: NSImage?
+    /// The picture was taken mid-load: a full one replaces it once the load finishes.
+    @ObservationIgnored var thumbnailWhileLoading = false
+    /// The picture's file in Browser.thumbnailsFolder, kept across launches.
+    @ObservationIgnored var thumbnailName = UUID().uuidString
+    @ObservationIgnored var thumbnailTask: Task<Void, Never>?
+    /// Pictures after an agent's command, apart from those after a load: neither cancels the other.
+    @ObservationIgnored var commandPictures: Task<Void, Never>?
+    @ObservationIgnored var thumbnailAt = Date.distantPast
     /// What the agent asked the person to do here (`ask`), while it waits.
     var asking: String?
     var url = ""
@@ -948,6 +958,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if isExpected(navigation) { finishLoad(nil) }
+        browser?.captureAfterLoad(self)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

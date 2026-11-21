@@ -45,6 +45,7 @@ extension Browser {
     /// suspended. The person's own tabs keep playing, as in any browser.
     private func setHidden(_ tab: Tab, _ hidden: Bool) {
         guard mainWindow.isHidden(tab.webView) != hidden else { return }
+        if hidden { captureThumbnail(tab) }
         mainWindow.setHidden(tab.webView, hidden)
         if tab.workspace.name != Self.userWorkspace { tab.setMuted(hidden) }
     }

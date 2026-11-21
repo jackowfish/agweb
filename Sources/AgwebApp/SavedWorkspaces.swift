@@ -3,7 +3,8 @@ import AgwebCore
 
 /// Workspaces and their tabs outlive the app: saved a second after anything changes and on quit, reopened at
 /// launch. A reopened tab loads when it is first shown or driven, so a relaunch doesn't load every page at once.
-/// `close` and `close-all` end a workspace for good, and so does a long time unused (Cleanup.swift).
+/// `close` and `close-all` end a workspace for good, and so does a long time unused (Cleanup.swift). A named profile's
+/// tabs also keep their dashboard picture, in <root>/thumbnails (Thumbnails.swift).
 struct SavedWorkspaces: Codable {
     struct Workspace: Codable {
         var name: String
@@ -25,6 +26,8 @@ struct SavedWorkspaces: Codable {
         var session: [String: [String: String]]?
         var lastUsed: Date?
         var usedClock: Double?
+        /// Tab.thumbnailName; a named profile's tabs only.
+        var thumbnail: String?
     }
 
     var workspaces: [Workspace]
@@ -59,7 +62,8 @@ extension Browser {
                 .init(name: workspace.name, profile: workspace.profile, current: workspace.tabs.firstIndex { $0.id == workspace.currentID },
                       tabs: workspace.tabs.map { .init(url: $0.currentURL, title: $0.currentTitle,
                                                        session: workspace.profile == nil || $0.session.isEmpty ? nil : $0.session,
-                                                       lastUsed: $0.lastUsed, usedClock: $0.usedClock) },
+                                                       lastUsed: $0.lastUsed, usedClock: $0.usedClock,
+                                                       thumbnail: workspace.profile == nil ? nil : $0.thumbnailName) },
                       adBlockOff: workspace.adBlockOff ? true : nil, lastUsed: workspace.lastUsed, usedClock: workspace.usedClock)
             },
             displayed: displayed?.workspace.name, displayedIndex: displayed.flatMap { tab in tab.workspace.tabs.firstIndex { $0 === tab } },
@@ -74,6 +78,8 @@ extension Browser {
     }
 
     func restoreWorkspaces() {
+        // No file: no tab names a picture. One that can't be read keeps them, as the profile sweep does.
+        guard FileManager.default.fileExists(atPath: Agweb.workspacesFile.path) else { pruneThumbnails(); return }
         guard let data = try? Data(contentsOf: Agweb.workspacesFile),
               case let decoder = { let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601; return decoder }(),
               let state = try? decoder.decode(SavedWorkspaces.self, from: data) else { return }
@@ -90,6 +96,10 @@ extension Browser {
                 tab.title = savedTab.title
                 tab.lastUsed = savedTab.lastUsed ?? tab.lastUsed
                 tab.usedClock = savedTab.usedClock ?? RunningClock.now
+                if let name = savedTab.thumbnail, UUID(uuidString: name) != nil, workspace.profile != nil {
+                    tab.thumbnailName = name
+                    tab.thumbnail = NSImage(contentsOf: Self.thumbnailFile(name))
+                }
             }
             workspace.lastUsed = saved.lastUsed ?? workspace.lastUsed
             workspace.usedClock = saved.usedClock ?? RunningClock.now
@@ -100,6 +110,7 @@ extension Browser {
             model.display(tabs[index].id, used: false)
         }
         if state.dashboard == true { model.dashboardOpen = true }
+        pruneThumbnails()
         AdBlock.shared.apply()
     }
 }

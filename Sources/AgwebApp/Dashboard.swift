@@ -4,41 +4,63 @@ import SwiftUI
 import WebKit
 
 // Every tab at once, in the window's content area: thumbnails, not live views. Live ones would all have to be
-// visible (see Visibility.swift) and shrinking them would relayout the pages. A thumbnail is a small snapshot,
-// which works on hidden tabs, refreshed about once a second for tabs an agent is working on.
+// visible (see Visibility.swift) and shrinking them would relayout the pages. A thumbnail is a small snapshot
+// (Thumbnails.swift), which works on hidden tabs, taken as an agent's command ends; nothing is polled. While the window
+// can be seen, even on a second display, the CPU and memory figures and the "ago" labels advance every 5 s; covered,
+// minimized, on another Space or with the screens asleep, the dashboard does nothing.
 extension Browser {
     func dashboardChanged(_ open: Bool) {
         dashboardTask?.cancel()
+        dashboardNap?.cancel()
+        dashboardRetake?.cancel()
+        dashboardObserver.map(NotificationCenter.default.removeObserver)
+        dashboardObserver = nil
+        // Before the dashboard hides the displayed tab, which then gets its own picture as it goes hidden; one an agent
+        // keeps awake, or one capturing, stays shown, so it is taken here.
+        if open, dashboardSeen {
+            let hiding = model.displayedTab.flatMap { needsVisible($0) || $0.liveCaptures > 0 ? nil : $0.id }
+            captureAwake(but: hiding)
+        }
         mainWindow.showDashboard(open)
         updateVisibility()
         scheduleSave()
         guard open else { return }
-        dashboardTask = Task { [weak self] in
-            var tick = 0
-            while !Task.isCancelled, let self {
-                await self.refreshThumbnails()
-                if Settings.store.bool(forKey: Settings.showUsage) {
-                    if tick % 5 == 0 { self.model.processes = self.usageSampler.sample() }
-                } else if !self.model.processes.isEmpty {
-                    self.model.processes = [:]
+        dashboardObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                                                                   object: mainWindow.window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.model.dashboardOpen, self.dashboardSeen else { return }
+                // Tabs that changed while nobody could see them; again a moment later for one WebKit wakes only now.
+                self.captureAwake(but: nil)
+                self.dashboardNap?.cancel()
+                self.dashboardRetake?.cancel()
+                self.dashboardRetake = Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    if !Task.isCancelled, self.model.dashboardOpen, self.dashboardSeen { self.captureAwake(but: nil) }
                 }
-                tick += 1
-                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        dashboardTask = Task { [weak self] in
+            while !Task.isCancelled, let self {
+                if self.dashboardSeen {
+                    self.model.dashboardNow = Date()
+                    if Settings.store.bool(forKey: Settings.showUsage) {
+                        self.model.processes = self.usageSampler.sample()
+                    } else if !self.model.processes.isEmpty {
+                        self.model.processes = [:]
+                    }
+                }
+                // A first sample (after a wait) has no CPU: the next comes half a second later.
+                let noCPU = self.model.processes.values.contains { $0.usage.cpu == nil }
+                let seconds = self.dashboardSeen ? (noCPU ? 0.5 : 5.0) : 3600
+                let nap = Task { _ = try? await Task.sleep(for: .seconds(seconds)) }
+                self.dashboardNap = nap
+                await nap.value
             }
         }
     }
 
-    func refreshThumbnails() async {
-        let config = WKSnapshotConfiguration()
-        config.snapshotWidth = 480
-        for tab in model.workspaces.flatMap(\.tabs) where tab.pendingURL == nil && tab.webView.url != nil {
-            // Idle tabs keep their picture: a snapshot of a suspended tab would wake its process. The displayed tab is
-            // hidden under the dashboard too; refreshing it every second kept the GPU process at 20% on YouTube.
-            let active = tab.workspace.busy || tab.awakeUntil > Date()
-            guard active || tab.thumbnail == nil else { continue }
-            if let image = try? await tab.snapshot(config, timeout: 3) { tab.thumbnail = image }
-        }
-    }
+    /// Some of the window is on a screen that is on: a second display counts, a covered window or another Space doesn't.
+    var dashboardSeen: Bool { mainWindow.window.occlusionState.contains(.visible) }
 
     /// What a dashboard tile says the agent did last; never the text it typed, filled or evaluated.
     static func summary(_ request: Request) -> String {
@@ -72,7 +94,7 @@ struct DashboardView: View {
             LazyVGrid(columns: grid, spacing: 18) {
                 ForEach(tabs) { tab in
                     let pid = tab.processID
-                    TabTile(tab: tab, displayed: model.displayedTabID == tab.id, usage: usage[pid]?.usage, shared: (sharing[pid] ?? 0) > 1,
+                    TabTile(tab: tab, displayed: model.displayedTabID == tab.id, usage: usage[pid]?.usage, now: model.dashboardNow, shared: (sharing[pid] ?? 0) > 1,
                             scale: textSize.scale) {
                         model.onCloseTab?(tab)
                     }
@@ -112,7 +134,9 @@ struct UsageTotal: View {
 
     private func total(_ usage: [pid_t: (name: String, usage: Usage)], tabs: Int) -> some View {
         func sum(_ list: some Sequence<(name: String, usage: Usage)>) -> Usage {
-            list.reduce(Usage(cpu: 0, memory: 0)) { Usage(cpu: $0.cpu + $1.usage.cpu, memory: $0.memory + $1.usage.memory) }
+            // The processes with a CPU figure (a new one gets its first after a sample); none when none has one.
+            let figures = list.compactMap(\.usage.cpu)
+            return Usage(cpu: figures.isEmpty ? nil : figures.reduce(0, +), memory: list.reduce(0) { $0 + $1.usage.memory })
         }
         let kinds: [(String, (String) -> Bool)] = [("Pages", { $0.contains("WebContent") }), ("GPU", { $0.contains("GPU") }),
                                                    ("Network", { $0.contains("Networking") }), ("App and other", { _ in true })]
@@ -136,6 +160,7 @@ private struct TabTile: View {
     let tab: Tab
     let displayed: Bool
     let usage: Usage?
+    let now: Date
     let shared: Bool
     /// The Settings text size; macOS text styles have fixed sizes, so these are the styles' sizes scaled.
     let scale: CGFloat
@@ -199,9 +224,8 @@ private struct TabTile: View {
                     .help(shared ? "This page shares its process with another tab, so both show the same numbers" : "This page's process")
             }
             if driven, let last = workspace.lastCommand, let at = workspace.lastCommandAt {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("\(last) · \(Self.ago(at, context.date))").font(.system(size: 10 * scale)).foregroundStyle(.secondary).lineLimit(1)
-                }
+                // Advanced with the dashboard's 5 s figures: TimelineViews here measured 2-9x the cost, depending on settings.
+                Text("\(last) · \(Self.ago(at, max(now, at)))").font(.system(size: 10 * scale)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }

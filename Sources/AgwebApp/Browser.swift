@@ -16,6 +16,10 @@ final class Browser {
     private var nextTabID = 1
     var saveTask: Task<Void, Never>?
     var dashboardTask: Task<Void, Never>?
+    /// The dashboard loop's wait; the window being shown again ends it early.
+    var dashboardNap: Task<Void, Never>?
+    var dashboardObserver: NSObjectProtocol?
+    var dashboardRetake: Task<Void, Never>?
     let usageSampler = UsageSampler()
 
     /// Tabs a person opens from the window, when no agent tab is displayed, live in this workspace.
@@ -162,6 +166,9 @@ final class Browser {
         tab.ownController?.removeAllScriptMessageHandlers()
         mainWindow.remove(tab.webView)
         workspace.tabs.remove(at: index)
+        tab.thumbnailTask?.cancel()
+        tab.commandPictures?.cancel()
+        deleteThumbnail(tab)
         if workspace.currentID == tab.id {
             let opener = tab.opener.flatMap { opener in workspace.tabs.contains { $0 === opener } ? opener : nil }
             workspace.currentID = opener?.id ?? (workspace.tabs.indices.contains(index) ? workspace.tabs[index] : workspace.tabs.last)?.id
@@ -193,6 +200,7 @@ final class Browser {
         for workspace in model.workspaces { videos += await describeStop(workspace) }
         for tab in model.workspaces.flatMap(\.tabs) { await tab.captureSession() }
         await Profiles.saveSessionCookies()
+        await captureForQuit()
         saveWorkspaces()
         preparedToQuit = true
         return videos
@@ -293,6 +301,7 @@ final class Browser {
                 // and the tab it left current: a popup or tab-select moves the agent on.
                 if workspace.actedOn != nil, let tab = workspace.current {
                     keepAwakeAfterCommand(tab)
+                    captureAfterCommand(tab)
                     Task { await tab.captureSession() }
                 }
                 workspace.actedOn = nil
@@ -357,9 +366,17 @@ final class Browser {
             guard model.dashboardOpen else { return "dashboard hidden" }
             mainWindow.showQuietly()
             guard let path = options["filename"] else { return "dashboard shown" }
-            // The tabs' pictures first, then a moment for the grid to draw them; at most 3 s, as tabs that don't answer
-            // (a minimized window, a stuck page) take 3 s each.
+            // Pictures of the tabs an agent is on and of those without one first, then a moment for the grid to draw
+            // them; at most 3 s, as tabs that don't answer (a minimized window, a stuck page) take 3 s each.
             _ = try? await withTimeout(3, "thumbnails") { await self.refreshThumbnails() }
+            // The figures and clock too: the loop waits while the window is covered, as it often is here, and a first
+            // sample after a wait has no CPU yet, so a second one half a second later.
+            model.dashboardNow = Date()
+            if Settings.store.bool(forKey: Settings.showUsage), model.processes.isEmpty || model.processes.values.contains(where: { $0.usage.cpu == nil }) {
+                model.processes = usageSampler.sample()
+                try await Task.sleep(for: .milliseconds(500))
+                model.processes = usageSampler.sample()
+            }
             try await Task.sleep(for: .milliseconds(300))
             guard let png = mainWindow.dashboardPNG() else { throw Failure("could not draw the dashboard") }
             let url = URL(fileURLWithPath: path)
