@@ -23,6 +23,11 @@ extension Browser {
     /// A tab using the fake camera or mic stays awake too, as a capturing page does in Safari: hidden, its frames would
     /// slow to about one a second and its process would be suspended. Muted while nothing else needs it shown.
     func updateVisibility() {
+        // The tab the person was looking at keeps playing as they look away (another tab, the dashboard), as in any
+        // browser: a tab playing sound they can hear is muted only by them, from its menu.
+        let shown = model.dashboardOpen ? nil : model.displayedTab
+        if let left = shownTab, left !== shown, left.personSound == nil, left.audible { left.personSound = true }
+        shownTab = shown
         for tab in model.workspaces.lazy.flatMap(\.tabs) {
             let needed = needsVisible(tab), capturing = tab.liveCaptures > 0
             setHidden(tab, !needed && !capturing)

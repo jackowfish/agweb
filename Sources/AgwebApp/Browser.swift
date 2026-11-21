@@ -25,6 +25,8 @@ final class Browser {
     var dashboardRetake: Task<Void, Never>?
     /// What had the person's focus in the displayed tab when the window was covered (Visibility.swift).
     weak var coveredResponder: NSView?
+    /// The tab the person last saw in the window (Visibility.swift).
+    weak var shownTab: Tab?
     let usageSampler = UsageSampler()
 
     /// Tabs a person opens from the window, when no agent tab is displayed, live in this workspace.
