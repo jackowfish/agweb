@@ -20,6 +20,8 @@ final class BrowserModel {
     /// The tab's id, and whether showing it counts as use (Tab.lastUsed): not a fallback after a close, nor the launch.
     @ObservationIgnored var onDisplay: ((Int, Bool) -> Void)?
     @ObservationIgnored var onCloseTab: ((Tab) -> Void)?
+    /// The tab's menu: Mute Tab (false) or Unmute Tab (true).
+    @ObservationIgnored var onSound: ((Tab, Bool) -> Void)?
     @ObservationIgnored var onCloseWorkspace: ((Workspace) -> Void)?
     @ObservationIgnored var onNewTab: ((Workspace?) -> Void)?
     /// File ▸ New Workspace: a name and a named profile (nil: fresh); returns why it failed.
@@ -91,6 +93,11 @@ final class Workspace: Identifiable {
     @ObservationIgnored var recorder: Recorder?
     /// `agweb -w NAME adblock off`: this workspace loads everything until it turns it back on; kept across restarts.
     @ObservationIgnored var adBlockOff = false
+    /// `agweb -w NAME unload off`: its tabs keep their pages however long they sit unused; kept across restarts.
+    @ObservationIgnored var unloadOff = false
+    /// `agweb -w NAME sound on`: its tabs are heard while hidden too (music behind other tabs or the dashboard); an
+    /// agent's tabs are otherwise muted while hidden. Kept across restarts.
+    @ObservationIgnored var soundOn = false
     /// What the agent's pages copied, or `clipboard-set` gave; never the person's clipboard (ClipboardRouting.swift).
     @ObservationIgnored var clipboard: Clip?
     @ObservationIgnored let dataStore: WKWebsiteDataStore
@@ -200,7 +207,7 @@ final class Workspace: Identifiable {
             }
         }
         // A tab not loaded yet gets them from the user script; running a script would start its web process.
-        for tab in tabs where tab.pendingURL == nil { tab.webView.evaluateJavaScript(setRoutes) }
+        for tab in tabs where tab.pendingURL == nil && !tab.unloaded { tab.webView.evaluateJavaScript(setRoutes) }
     }
 
     /// `lazy`: no web process until the first load, for a reopened tab whose page loads only when used. Not for a tab
@@ -622,8 +629,11 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var geolocationAsked = false
     /// getUserMedia calls whose fake tracks are live; the tab stays awake meanwhile (Visibility.swift).
     @ObservationIgnored var liveCaptures = 0
-    /// What setMuted last set.
-    @ObservationIgnored private var isMuted = false
+    /// What setMuted last set; observed for the Mute/Unmute item in the tab's menu.
+    private(set) var isMuted = false
+    /// The person's Mute Tab (false) or Unmute Tab (true, heard even hidden) from the tab's menu, over the
+    /// workspace's rule; nil follows it. For this run only.
+    var personSound: Bool?
     /// The cross-origin frame each snapshot ref inside one lives in; a ref missing here is in the page itself.
     @ObservationIgnored var frameRefs: [String: Frame] = [:]
     /// When the agent's last command here ended plus the grace, and the person's last click or key in the page while
@@ -654,6 +664,15 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     /// Where the next download goes; nil is the workspace's download folder.
     /// A tab reopened at launch: where it was, loaded on first use.
     @ObservationIgnored var pendingURL: URL?
+    /// Its web content process was ended after it sat idle (Unload.swift); the next use reloads it.
+    @ObservationIgnored var unloaded = false
+    /// The process was killed and WebKit hasn't reported its end yet: a load started meanwhile would die with it.
+    @ObservationIgnored var awaitingExit = false
+    /// The page is a POST's result, which a reload would send again (an unloaded one comes back by its address
+    /// instead); and the method of the main-frame load under way.
+    @ObservationIgnored private(set) var postedPage = false
+    @ObservationIgnored private var loadingMethod: String?
+    var downloading: Bool { !downloads.isEmpty }
     @ObservationIgnored var downloadPath: URL?
     @ObservationIgnored var downloadsStarted = 0
     /// Saved paths, or why a download failed, in the order they ended.
@@ -699,7 +718,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         // KVO catches what navigation callbacks miss: late titles and pushState URL changes.
         observations = [
             webView.observe(\.title) { [weak self] webView, _ in
-                Task { @MainActor in self?.title = webView.title ?? "" }
+                // An unloaded tab's web view forgets its title; the sidebar keeps showing the page's.
+                Task { @MainActor in if self?.unloaded == false { self?.title = webView.title ?? "" } }
             },
             webView.observe(\.url) { [weak self] webView, _ in
                 Task { @MainActor in
@@ -719,6 +739,33 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     /// Loads a reopened tab's page, or waits for the load already under way: the window starts one for the tab it
     /// shows, and a command arriving meanwhile must not act on about:blank.
     func loadIfPending() async throws {
+        if unloaded {
+            unloaded = false
+            let posted = postedPage
+            events.append("the tab was unloaded to free memory after it sat unused, and reloaded now: what the page held only in memory (typed text, scroll position, an app's state) is gone"
+                + (posted ? "; it showed a form's result, so it was opened by its address instead, without sending the form again" : ""))
+            let address = URL(string: url)
+            let generation = loadGeneration
+            initialLoad = Task {
+                await self.endOfUnload()
+                // A goto or a close meanwhile: their load wins, and a closed tab's detached view must not load.
+                guard generation == self.loadGeneration else { return }
+                do {
+                    // The web view still has the entry, so history survives; without one, the saved address. A reload
+                    // of a POST's result would send the form again.
+                    if !posted, let navigation = self.webView.reload() {
+                        self.expected = navigation
+                        try await self.waitForLoad()
+                    } else if let address, try await self.load(address) {
+                        try await self.waitForLoad()
+                    }
+                } catch {
+                    // Still no page: the next command or display tries again.
+                    if self.webView.url == nil { self.unloaded = true }
+                    throw error
+                }
+            }
+        }
         if let url = pendingURL {
             pendingURL = nil
             // A tab reopened at launch loads before any command: it too waits for last time's ad-blocking rules.
@@ -730,6 +777,13 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         guard let task = initialLoad else { return }
         defer { if initialLoad == task { initialLoad = nil } }
         try await task.value
+    }
+
+    /// A load must not start before WebKit has seen the killed process go, or it goes with it.
+    func endOfUnload() async {
+        for _ in 0..<40 where awaitingExit { try? await Task.sleep(for: .milliseconds(50)) }
+        // No word from WebKit: a later crash must not be taken for this.
+        awaitingExit = false
     }
 
     /// A tab opened behind the current one: a command that later selects it waits for this load like a reopened tab's.
@@ -758,6 +812,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     func goto(_ url: URL) async throws {
         pendingURL = nil
         initialLoad = nil
+        unloaded = false
+        await endOfUnload()
         // A fragment-only change is a same-document navigation; WebKit sends no didFinish for it.
         if let current = webView.url, Self.sameDocument(current, url) {
             webView.load(URLRequest(url: url))
@@ -836,7 +892,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     func captureSession() async {
-        guard workspace.profile != nil, pendingURL == nil, let scheme = webView.url?.scheme, scheme.hasPrefix("http"),
+        guard workspace.profile != nil, pendingURL == nil, !unloaded, let scheme = webView.url?.scheme, scheme.hasPrefix("http"),
               // Short: quit reads every tab, and a hung page must not hold it up.
               let json = try? await withTimeout(2, "reading sessionStorage", { try await self.call(PageScripts.readSession) }),
               let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
@@ -856,6 +912,15 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var lastUsed = Date() { didSet { usedClock = RunningClock.now } }
     /// RunningClock at that use, as for Workspace.usedClock.
     @ObservationIgnored var usedClock = RunningClock.now
+    /// RunningClock when Unload.swift last saw it shown or heard: being read or played is use too, so a tab isn't
+    /// unloaded the moment the person switches away, nor in a gap between two songs.
+    @ObservationIgnored var seenClock = 0.0
+    /// The page process was killed (Unload.swift) or crashed, so every page in its history is gone: a back or forward
+    /// onto a form's result would send the form again. A tab that never lost its process resubmits as before.
+    @ObservationIgnored var lostPages = false
+    /// An explicit reload (the agent's or the toolbar's) under way, up to its commit: it may send a form again, its
+    /// redirects included.
+    @ObservationIgnored var resubmitAllowed = false
     @ObservationIgnored private var useSavedAt = Date.distantPast
 
     func markUsed() {
@@ -878,6 +943,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     var state: String {
+        if unloaded { return "unloaded" }
         if pendingURL != nil || webView.url == nil { return "not loaded" }
         let selector = NSSelectorFromString("_webProcessState")
         typealias Get = @convention(c) (AnyObject, Selector) -> Int
@@ -888,6 +954,16 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         // A closed or minimized window hides every tab from WebKit.
         let shown = webView.superview?.isHidden == false && webView.window.map(MainWindow.isRendering) == true
         return shown ? "visible" : "hidden"
+    }
+
+    /// Playing sound the person can hear: kept loaded, like a playing tab in Safari or Chrome. Without WebKit's
+    /// `_isPlayingAudio`, any unmuted tab counts.
+    var audible: Bool {
+        guard !isMuted else { return false }
+        let selector = NSSelectorFromString("_isPlayingAudio")
+        guard webView.responds(to: selector) else { return true }
+        typealias Get = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(webView.method(for: selector), to: Get.self)(webView, selector)
     }
 
     func setMuted(_ muted: Bool) {
@@ -956,6 +1032,10 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         commits += 1
+        resubmitAllowed = false
+        postedPage = loadingMethod == "POST"
+        // However it got here (the toolbar's reload, a load that bypassed loadIfPending), the page is back.
+        unloaded = false
         // A reopened tab starts with its saved title; on a page with none, the title never changes, so KVO never fires.
         title = webView.title ?? ""
         // Input given to the last page is not this one's: it can't use the clipboard until it gets some.
@@ -978,6 +1058,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        resubmitAllowed = false
         loadFailed(navigation, error)
     }
 
@@ -1007,6 +1088,16 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
            let url = navigationAction.request.url, let browser {
             events.append("opened in tab \(browser.openInBackground(url, from: self)): \(url.absoluteString)")
             return decisionHandler(.cancel)
+        }
+        if navigationAction.targetFrame?.isMainFrame == true {
+            if navigationAction.navigationType == .formResubmitted, lostPages, !resubmitAllowed {
+                events.append("agweb did not send the form again: that history entry is a form's result, gone since the tab was unloaded or crashed, so go-back stops there; goto the page you want (agweb history lists them), or fill and submit the form again")
+                return decisionHandler(.cancel)
+            }
+        }
+        // Only a load that goes ahead: a cancelled or downloaded one doesn't replace the page whose method this records.
+        if !navigationAction.shouldPerformDownload, navigationAction.targetFrame?.isMainFrame == true {
+            loadingMethod = navigationAction.request.httpMethod
         }
         decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
     }
@@ -1086,6 +1177,11 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        // Unload.swift killed it on purpose: the next use reloads it.
+        if awaitingExit {
+            awaitingExit = false
+            return
+        }
         finishLoad(Failure("page crashed while loading"))
         // A page that crashes as it loads would otherwise reload forever in a tab nobody watches.
         let now = ProcessInfo.processInfo.systemUptime
@@ -1094,8 +1190,10 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             events.append("page crashed again; not reloading (agweb reload)")
             return
         }
+        lostPages = true
         events.append("page crashed (web content process ended); reloaded")
-        webView.reload()
+        // A form's result comes back by its address, as an unloaded one does: a reload would send the form again.
+        if postedPage, let address = URL(string: url) { webView.load(URLRequest(url: address)) } else { webView.reload() }
     }
 
     // MARK: Things that would normally pop up

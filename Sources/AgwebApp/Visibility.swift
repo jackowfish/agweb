@@ -26,7 +26,7 @@ extension Browser {
         for tab in model.workspaces.lazy.flatMap(\.tabs) {
             let needed = needsVisible(tab), capturing = tab.liveCaptures > 0
             setHidden(tab, !needed && !capturing)
-            if tab.workspace.name != Self.userWorkspace { tab.setMuted(!needed && !isDisplayed(tab)) }
+            updateMute(tab, quiet: !needed && !isDisplayed(tab))
         }
     }
 
@@ -38,13 +38,13 @@ extension Browser {
         tab.markUsed()
         guard mainWindow.isHidden(tab.webView) else { return }
         setHidden(tab, false)
-        guard tab.pendingURL == nil else { return }
+        guard tab.pendingURL == nil, !tab.unloaded else { return }
         await tab.activityStateApplied()
         await tab.settle()
     }
 
-    /// Hidden agent tabs are muted too: a page playing audio holds its process in the foreground, so it would never be
-    /// suspended. The person's own tabs keep playing, as in any browser.
+    /// Hidden agent tabs are muted too, unless their workspace has `sound on`: a page playing audio holds its process in
+    /// the foreground, so it would never be suspended. The person's own tabs keep playing, as in any browser.
     private func setHidden(_ tab: Tab, _ hidden: Bool) {
         guard mainWindow.isHidden(tab.webView) != hidden else { return }
         let window = mainWindow.window
@@ -65,7 +65,15 @@ extension Browser {
                 releaseSecureInput()
             }
         }
-        if tab.workspace.name != Self.userWorkspace { tab.setMuted(hidden && !isDisplayed(tab)) }
+        updateMute(tab, quiet: hidden && !isDisplayed(tab))
+    }
+
+    /// As the person set it from the tab's menu; else an agent's tab is muted while `quiet` (hidden, or awake only to
+    /// capture) unless its workspace has `sound on`. The person's own workspaces have no agent's current tab.
+    private func updateMute(_ tab: Tab, quiet: Bool) {
+        let workspace = tab.workspace
+        let persons = workspace.currentID == nil || workspace.name == Self.userWorkspace
+        tab.setMuted(tab.personSound.map { !$0 } ?? (quiet && !persons && !workspace.soundOn))
     }
 
     /// Shown in the window, whether or not anyone can see the window.

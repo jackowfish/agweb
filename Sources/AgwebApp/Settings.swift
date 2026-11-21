@@ -9,7 +9,7 @@ enum Settings {
     /// never changes or deletes the person's.
     static let store: UserDefaults = {
         let store = Agweb.isDefaultRoot ? .standard : UserDefaults(suiteName: Agweb.settingsSuite(root: Agweb.root))!
-        store.register(defaults: [showUsage: true, adBlock: true, passkeys: true, closeUnusedDays: 7])
+        store.register(defaults: [showUsage: true, adBlock: true, passkeys: true, closeUnusedDays: 7, unloadIdleMinutes: 30])
         return store
     }()
     static let showUsage = "dashboardShowsUsage"
@@ -20,6 +20,8 @@ enum Settings {
     static let passkeys = "agwebPasskeys"
     /// Workspaces and tabs unused this many days close by themselves (Cleanup.swift); 0 never.
     static let closeUnusedDays = "closeUnusedDays"
+    /// Tabs unused this many minutes lose their page's memory and reload when used (Unload.swift); 0 never.
+    static let unloadIdleMinutes = "unloadIdleMinutes"
 }
 
 /// The sidebar's and the dashboard's text; pages have their own zoom (⌘+, ⌘−).
@@ -106,6 +108,7 @@ struct PasskeySettings: View {
 /// The command line tool and the agent skill.
 struct GeneralSettings: View {
     @AppStorage(Settings.closeUnusedDays, store: Settings.store) private var closeUnused = 7
+    @AppStorage(Settings.unloadIdleMinutes, store: Settings.store) private var unloadIdle = 30
     @State private var skill: [String] = []
     @State private var cli = ""
 
@@ -130,6 +133,13 @@ struct GeneralSettings: View {
                     Text("Never").tag(0)
                 }
                 Text("Only time agweb is running counts. Your own workspaces and what an agent is working on stay.").font(.caption).foregroundStyle(.secondary)
+                Picker("Unload unused tabs after", selection: $unloadIdle) {
+                    Text("10 minutes").tag(10)
+                    Text("30 minutes").tag(30)
+                    Text("2 hours").tag(120)
+                    Text("Never").tag(0)
+                }
+                Text("Frees the tab's memory; it reloads when used, losing typed text and scroll position. Sooner when the Mac is short on memory. Never the tab shown, nor one playing sound you can hear.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

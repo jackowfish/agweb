@@ -103,6 +103,10 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   passkey delete <id>           forget one an agent made (the site still lists it until removed there)
   adblock [on|off|update]       ads and trackers are blocked with uBlock Origin's lists; off/on: for this workspace
                                 only (Settings switches every workspace); pages opened directly always load
+  unload [on|off]               off: this workspace's tabs are never unloaded (by default one unused 30 minutes,
+                                per Settings, frees its memory and reloads when used)
+  sound [on|off]                on: this workspace's tabs are heard even while hidden or behind the dashboard (by
+                                default muted unless shown); a playing tab one can hear is never unloaded
   install-cli [--check]         link /usr/local/bin/agweb to this app's CLI (also Help menu); --check says what is there
   install-skill [--check]       link the agent skill for Claude Code and Codex to this app's (also Help menu)
   update [--check]              install the latest release from GitHub and restart, every workspace reopening
@@ -426,7 +430,7 @@ if !isServing(socket) {
         let launch = Process()
         launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         // The selftest's: a shorter visible time after a command, install targets away from the person's, a local filter list.
-        let passed = ["AGWEB_AWAKE_SECONDS", "AGWEB_HOME", "AGWEB_CLI_LINK", "AGWEB_ADBLOCK_LISTS", "AGWEB_UPDATE_FEED", "AGWEB_PASSKEY_STORE", "AGWEB_PASSKEY_SECONDS"].flatMap { name in env[name].map { ["--env", "\(name)=\($0)"] } ?? [] }
+        let passed = ["AGWEB_AWAKE_SECONDS", "AGWEB_HOME", "AGWEB_CLI_LINK", "AGWEB_ADBLOCK_LISTS", "AGWEB_UPDATE_FEED", "AGWEB_PASSKEY_STORE", "AGWEB_PASSKEY_SECONDS", "AGWEB_UNLOAD_SECONDS"].flatMap { name in env[name].map { ["--env", "\(name)=\($0)"] } ?? [] }
         launch.arguments = ["-g", "-n", "--env", "AGWEB_ROOT=\(Agweb.root.path)"] + passed + ["-a", app]
         try launch.run()
         launch.waitUntilExit()

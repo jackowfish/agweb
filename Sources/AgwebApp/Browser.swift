@@ -13,6 +13,9 @@ final class Browser {
     /// since a profile's pages are shared.
     private var secrets: Set<String> = []
     private var queues: [String: Task<Response, Never>] = [:]
+    /// Unload.swift: the memory pressure source it listens to, and until when its last warning holds.
+    var memoryPressure: DispatchSourceMemoryPressure?
+    var pressureUntil = Date.distantPast
     private var nextTabID = 1
     var saveTask: Task<Void, Never>?
     var dashboardTask: Task<Void, Never>?
@@ -58,6 +61,12 @@ final class Browser {
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.releaseSecureInput() } }
         }
         model.onCloseTab = { [weak self] tab in self?.closeTab(tab) }
+        model.onSound = { [weak self] tab, heard in
+            guard let self else { return }
+            // Unmuting what the person muted on a shown tab goes back to the workspace's rule; a hidden one is heard.
+            tab.personSound = heard ? (self.needsVisible(tab) ? nil : true) : false
+            self.updateVisibility()
+        }
         model.onCloseWorkspace = { [weak self] workspace in self?.closeWorkspace(workspace) }
         model.onNewTab = { [weak self] workspace in self?.newTabFromUser(in: workspace) }
         model.onNewWorkspace = { [weak self] name, profile in
@@ -232,7 +241,7 @@ final class Browser {
             updateVisibility()
             return
         }
-        for tab in workspace.tabs where tab.pendingURL == nil {
+        for tab in workspace.tabs where tab.pendingURL == nil && !tab.unloaded {
             tab.webView.evaluateJavaScript(shim, in: nil, in: .page) { _ in }
         }
     }
@@ -450,6 +459,24 @@ final class Browser {
             case let other?: throw Failure("adblock takes on, off, update or nothing, not \(other)")
             }
             return AdBlock.shared.status(for: workspace)
+        case "unload", "sound":
+            // Per workspace, kept across restarts: unload off keeps its pages loaded, sound on lets them be heard hidden.
+            let name = request.command
+            guard let workspace = model.workspaces.first(where: { $0.name == request.workspace }) else {
+                throw Failure("no workspace '\(request.workspace)'; \(name) on|off applies to one open workspace: agweb -w NAME \(name) \(name == "unload" ? "off" : "on")")
+            }
+            switch args.first {
+            case nil, "status": break
+            case "on", "off":
+                let on = args.first == "on"
+                if name == "unload" { workspace.unloadOff = !on } else { workspace.soundOn = on }
+                updateVisibility()
+                scheduleSave()
+            case let other?: throw Failure("\(name) takes on or off, not \(other)")
+            }
+            return name == "unload"
+                ? (workspace.unloadOff ? "unload off: this workspace's tabs keep their pages however long they sit unused" : "unload on: a tab unused for a while is unloaded to free memory and reloads when used")
+                : (workspace.soundOn ? "sound on: this workspace's tabs are heard even while hidden" : "sound off: this workspace's tabs are muted while hidden")
         case "profile" where (args.first ?? "list") == "list":
             let names = Profiles.names
             if names.isEmpty { return "no named profiles; open a workspace with -p NAME to create one" }
@@ -710,7 +737,9 @@ final class Browser {
         case "goto":
             try await tab.goto(try Address.url(try arg(0, "url")))
         case "reload":
-            webView.reload()
+            // Before the call: WebKit may ask about the navigation before reload() returns.
+            tab.resubmitAllowed = true
+            if webView.reload() == nil { tab.resubmitAllowed = false }
             await tab.settle()
         case "go-back":
             guard webView.goBack() != nil else { return describe(tab, note: "no earlier page in this tab, so go-back did nothing") }

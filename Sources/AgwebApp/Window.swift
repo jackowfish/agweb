@@ -276,7 +276,12 @@ final class MainWindow: NSObject, NSWindowDelegate {
     // The person's, from the toolbar, the menu or a side button: use, like a click in the page.
     @objc func goBack(_ sender: Any?) { model.displayedTab?.markUsed(); model.displayedTab?.webView.goBack() }
     @objc func goForward(_ sender: Any?) { model.displayedTab?.markUsed(); model.displayedTab?.webView.goForward() }
-    @objc func reloadPage(_ sender: Any?) { model.displayedTab?.markUsed(); model.displayedTab?.webView.reload() }
+    @objc func reloadPage(_ sender: Any?) {
+        guard let tab = model.displayedTab else { return }
+        tab.markUsed()
+        tab.resubmitAllowed = true
+        if tab.webView.reload() == nil { tab.resubmitAllowed = false }
+    }
 
     // Safari's steps. Clicks and screenshots already scale by pageZoom; a zoomed page has a narrower CSS viewport,
     // so this is for the person, per tab, and not saved.
@@ -309,6 +314,7 @@ struct SidebarView: View {
                             .tag(tab.id)
                             .contextMenu {
                                 Button("Close Tab") { model.onCloseTab?(tab) }
+                                SoundButton(tab: tab, model: model)
                                 Button("New Tab in \(workspace.name)") { model.onNewTab?(workspace) }
                             }
                     }
@@ -369,6 +375,7 @@ private struct TabRow: View {
                 .foregroundStyle(driven ? .primary : .secondary)
                 .help(driven && agent ? "The tab this workspace's agent drives" : "")
             Spacer(minLength: 0)
+            MutedIcon(tab: tab).font(.caption2)
             ActivityDot(tab: tab, working: working)
             Button(action: close) { Image(systemName: "xmark").font(.caption2) }
                 .buttonStyle(.borderless)
@@ -376,6 +383,27 @@ private struct TabRow: View {
                 .help("Close tab")
         }
         .onHover { hovering = $0 }
+    }
+}
+
+/// Mute Tab or Unmute Tab, in the tab's menu in the sidebar and the dashboard. Unmuted, it is heard even hidden.
+struct SoundButton: View {
+    let tab: Tab
+    let model: BrowserModel
+
+    var body: some View {
+        Button(tab.isMuted ? "Unmute Tab" : "Mute Tab") { model.onSound?(tab, tab.isMuted) }
+    }
+}
+
+/// Shown while the person muted the tab from its menu; an agent's hidden tabs, muted by default, show nothing.
+struct MutedIcon: View {
+    let tab: Tab
+
+    var body: some View {
+        if tab.personSound == false {
+            Image(systemName: "speaker.slash.fill").foregroundStyle(.secondary).help("Muted (the tab's menu unmutes it)")
+        }
     }
 }
 

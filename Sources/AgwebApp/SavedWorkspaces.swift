@@ -13,6 +13,9 @@ struct SavedWorkspaces: Codable {
         var tabs: [Tab]
         /// `agweb -w NAME adblock off`; nil when it blocks.
         var adBlockOff: Bool?
+        /// `unload off` and `sound on`; nil at the default.
+        var unloadOff: Bool?
+        var soundOn: Bool?
         /// Workspace.lastUsed; nil in files from before it was kept, read as the launch time.
         var lastUsed: Date?
         /// Workspace.usedClock; nil in older files, read as now.
@@ -64,7 +67,8 @@ extension Browser {
                                                        session: workspace.profile == nil || $0.session.isEmpty ? nil : $0.session,
                                                        lastUsed: $0.lastUsed, usedClock: $0.usedClock,
                                                        thumbnail: workspace.profile == nil ? nil : $0.thumbnailName) },
-                      adBlockOff: workspace.adBlockOff ? true : nil, lastUsed: workspace.lastUsed, usedClock: workspace.usedClock)
+                      adBlockOff: workspace.adBlockOff ? true : nil, unloadOff: workspace.unloadOff ? true : nil,
+                      soundOn: workspace.soundOn ? true : nil, lastUsed: workspace.lastUsed, usedClock: workspace.usedClock)
             },
             displayed: displayed?.workspace.name, displayedIndex: displayed.flatMap { tab in tab.workspace.tabs.firstIndex { $0 === tab } },
             dashboard: model.dashboardOpen ? true : nil, clock: RunningClock.now)
@@ -87,6 +91,8 @@ extension Browser {
         for saved in state.workspaces where !model.workspaces.contains(where: { $0.name == saved.name }) {
             guard let workspace = try? existingOrNewWorkspace(named: saved.name, profile: saved.profile) else { continue }
             workspace.adBlockOff = saved.adBlockOff == true
+            workspace.unloadOff = saved.unloadOff == true
+            workspace.soundOn = saved.soundOn == true
             for savedTab in saved.tabs {
                 let url = URL(string: savedTab.url).flatMap { $0.absoluteString == "about:blank" ? nil : $0 }
                 let seeds = workspace.profile == nil ? [:] : savedTab.session ?? [:]

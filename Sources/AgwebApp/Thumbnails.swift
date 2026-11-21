@@ -24,7 +24,7 @@ extension Browser {
 
     /// Loaded and its process running: a covered window lets WebKit suspend even the displayed tab.
     private func canPicture(_ tab: Tab) -> Bool {
-        tab.pendingURL == nil && tab.webView.url != nil && MainWindow.isRendering(mainWindow.window) && !["suspended", "not running"].contains(tab.state)
+        tab.pendingURL == nil && !tab.unloaded && tab.webView.url != nil && MainWindow.isRendering(mainWindow.window) && !["suspended", "not running"].contains(tab.state)
     }
 
     /// Before the tab's view is hidden, so the picture is what was on screen. `save: false` keeps it in memory only.

@@ -99,6 +99,10 @@ struct DashboardView: View {
                         model.onCloseTab?(tab)
                     }
                         .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Close Tab") { model.onCloseTab?(tab) }
+                            SoundButton(tab: tab, model: model)
+                        }
                         .onTapGesture {
                             model.dashboardOpen = false
                             model.display(tab.id)
@@ -210,6 +214,7 @@ private struct TabTile: View {
                 Text(tab.title.isEmpty ? (tab.url.isEmpty ? "New tab" : tab.url) : tab.title).lineLimit(1).truncationMode(.tail)
                     .foregroundStyle(driven || workspace.currentID == nil ? .primary : .secondary)
                 Spacer(minLength: 0)
+                MutedIcon(tab: tab).font(.system(size: 10 * scale))
                 // Both truncate on a narrow tile, so neither the title nor the workspace is squeezed to "…" alone.
                 HStack(spacing: 6) {
                     Label(workspace.name, systemImage: "square.stack").lineLimit(1)

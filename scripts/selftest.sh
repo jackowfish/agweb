@@ -30,7 +30,7 @@ mkdir -p "$unnamed"
 
 # A free port the server really answers on, or stop: without it every check fails for the same reason.
 server= proxy=
-trap '"$agweb" quit >/dev/null 2>&1; [ -n "$server" ] && kill $server 2>/dev/null; [ -n "$proxy" ] && kill $proxy 2>/dev/null; wait 2>/dev/null; for d in "$suite" "agweb.root$(printf %s "$dir/o" | tr / _)"; do defaults delete "$d" 2>/dev/null; rm -f ~/Library/Preferences/"$d".plist; done; rm -r "$dir"' EXIT
+trap '"$agweb" quit >/dev/null 2>&1; [ -n "$server" ] && kill $server 2>/dev/null; [ -n "$proxy" ] && kill $proxy 2>/dev/null; wait 2>/dev/null; for d in "$suite" "agweb.root$(printf %s "$dir/o" | tr / _)" "agweb.root$(printf %s "$dir/u" | tr / _)"; do defaults delete "$d" 2>/dev/null; rm -f ~/Library/Preferences/"$d".plist; done; rm -r "$dir"' EXIT
 for _ in 1 2 3; do
     port=$(/usr/bin/python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     (script="$PWD/server.py"; cd "$dir" && exec /usr/bin/python3 "$script" "$port" >"$dir/server.log" 2>&1) &
@@ -961,6 +961,42 @@ if [ "$test_domain" != "$domain" ]; then
 fi
 [ -S "$dir/o/agweb.sock" ] || fail "the instance on another root has no socket in its root"
 AGWEB_ROOT="$dir/o" "$agweb" quit >/dev/null 2>&1
+
+echo "== a tab unused past the limit is unloaded to free memory and reloads when used; a POST's result by its address; never the displayed tab or a workspace with unload off"
+printf '<title>Unload one</title><p>one' >"$dir/un1.html"
+printf '<title>Unload two</title><p>two<input id=t>' >"$dir/un2.html"
+printf '<title>Order</title><form method=post action=/order><button id=go>Go</button></form>' >"$dir/order.html"
+# Its own instance, unloading after 3 s, in a subshell: the checks' failures come back as its exit status.
+(
+    export AGWEB_ROOT="$dir/u" AGWEB_UNLOAD_SECONDS=3
+    failures=0
+    b="http://127.0.0.1:$port"
+    # Launched outside `run`, as the other root above: a CI runner brings every app it launches to the front.
+    out=$("$agweb" -w shown open "$b/un1.html" 2>&1) || fail "the unloading instance did not start: $out"
+    check "Unload one" -w idle open "$b/un1.html"
+    check "Unload two" -w idle goto "$b/un2.html"
+    check "Page" -w idle eval "() => { sessionStorage.setItem('tok', 'S1'); window.kept = 1 }"
+    check "Unload two" -w kept open "$b/un2.html"
+    check "unload off" -w kept unload off
+    check "sound on: this workspace's tabs are heard" -w kept sound on
+    check "Order" -w order open "$b/order.html"
+    check "Posted" -w order click '#go'
+    sleep 8
+    check "Unload two.*(unloaded)" -w idle tab-list
+    lacks "(unloaded)" -w kept tab-list
+    check "(unloaded)" -w order tab-list
+    check "without sending the form again" -w order eval 1
+    lacks "(unloaded)" -w shown tab-list
+    check "unloaded to free memory" -w idle --raw eval "JSON.stringify([sessionStorage.getItem('tok'), typeof window.kept])"
+    printf '%s' "$out" | grep -q '\["S1","undefined"\]' || fail "an unloaded tab lost its sessionStorage, or kept its page's memory: $out"
+    check "Unload one" -w idle history
+    lacks "(unloaded)" -w idle tab-list
+    check "did not send the form again" -w order go-back
+    [ "$(wc -l <"$dir/posts.log")" -eq 1 ] || fail "the POST's result was sent again: $(cat "$dir/posts.log")"
+    "$agweb" quit >/dev/null 2>&1
+    exit "$failures"
+)
+failures=$((failures + $?))
 check "confirm() and prompt() will be accepted" -w beta dialog-accept
 check "will be dismissed" -w beta dialog-dismiss
 
