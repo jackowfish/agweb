@@ -33,7 +33,7 @@ extension MainWindow: NSToolbarDelegate, NSTextFieldDelegate, NSToolbarItemValid
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, Self.dashboardItem, .sidebarTrackingSeparator, Self.back, Self.forward, Self.reload,
+        [Self.dashboardItem, .sidebarTrackingSeparator, Self.back, Self.forward, Self.reload,
          .flexibleSpace, Self.address, Self.usage, Self.find, .flexibleSpace, Self.newTabItem]
     }
 

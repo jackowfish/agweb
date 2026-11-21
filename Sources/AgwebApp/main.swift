@@ -197,6 +197,8 @@ private func makeMainMenu(target: MainWindow, settings: SettingsWindow, about: A
         item("Find Previous", #selector(MainWindow.findPrevious(_:)), "g", [.command, .shift], to: target),
     ])
     submenu("View", [
+        // Nil target: the window's split view controller answers it and retitles it Show or Hide Sidebar.
+        item("Hide Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
         item("Dashboard", #selector(MainWindow.toggleDashboard(_:)), "d", to: target),
         .separator(),
         item("Reload Page", #selector(MainWindow.reloadPage(_:)), "r", to: target),
