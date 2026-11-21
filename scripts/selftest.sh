@@ -596,7 +596,7 @@ check "Title" -w st2 goto "$u"
 check '\["v1",.*c1=one' -w st2 eval '[localStorage.getItem("k"), document.cookie]'
 check "lax=v.*sameSite=lax" -w st2 cookie-list
 check "waited 300 ms" -w st2 wait 300
-check "Page" -w st2 eval "() => { setTimeout(() => { const p = document.createElement('p'); p.id = 'late'; p.textContent = 'Arrived late'; document.body.prepend(p) }, 500) }"
+check "Page" -w st2 eval "() => { setTimeout(() => { const p = document.createElement('p'); p.id = 'late'; p.textContent = 'Arrived late'; document.body.prepend(p) }, 1500) }"
 check "for #late" -w st2 wait '#late'
 check 'text "Arrived late"' -w st2 wait --text='Arrived late'
 check 'already true when wait started: text "Arrived late"' -w st2 wait --text='Arrived late'
@@ -1212,7 +1212,7 @@ mkdir -p "$dir/lanes"
 pids=
 # At most AGWEB_SELFTEST_LANES lanes at once (default: all; on CI, the runner's cores: its 3 cores stretch every
 # command, and checks timed against a page's timers fail): each of that many groups runs its lanes one after another.
-max=${AGWEB_SELFTEST_LANES:-$([ -n "${AGWEB_CI:-}" ] && sysctl -n hw.ncpu || echo 1000)}
+max=${AGWEB_SELFTEST_LANES:-$([ -n "${AGWEB_CI:-}" ] && echo 1 || echo 1000)}
 n=0
 for name in $lanes; do eval "group_$((n % max))=\"\${group_$((n % max)):-} $name\""; n=$((n + 1)); done
 g=0

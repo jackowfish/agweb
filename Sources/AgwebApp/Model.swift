@@ -1107,7 +1107,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             return
         }
         // As Playwright's does, the error names the URL that failed, which after a redirect is not the one asked for.
-        let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+        // macOS 15's proxy refusal (POSIX EAUTH) names none: the page asked for, then.
+        let url = ((error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString ?? webView.url?.absoluteString
         guard isExpected(navigation) else { return }
         let note = workspace.profile.flatMap(Profiles.routeNote)
         // What a proxy answers to missing or wrong credentials; WebKit's text names no proxy. macOS 15 reports it as
