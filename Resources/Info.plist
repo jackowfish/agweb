@@ -8,6 +8,8 @@
 	<string>agweb</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.reacsdas.agweb</string>
 	<key>CFBundleName</key>
