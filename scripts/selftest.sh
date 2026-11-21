@@ -513,6 +513,12 @@ fails "timed out" -w st2 wait '#nothing' --timeout=300
 fails "now: no visible element matches role=button\[name=\"Kopieren\"\]; visible buttons" -w st2 wait 'role=button[name="Kopieren"]' --timeout=300
 check "nothing visible matches text=\"Never here\"" -w st2 wait 'text="Never here"' --gone
 fails "invalid selector" -w st2 wait 'bad[[' --timeout=5000
+fails '^Error: invalid selector "": the target is empty' -w st2 wait '' --timeout=5000
+fails 'invalid selector "  ": the target is empty' -w st2 fill '  ' hello
+fails 'invalid selector " >> nth=0": the target is empty' -w st2 click ' >> nth=0'
+fails 'invalid selector "": the target is empty' -w st2 snapshot ''
+fails 'invalid selector "": the target is empty' -w st2 markdown ''
+fails 'invalid selector "": the target is empty' -w st2 highlight '' --hide
 fails "matches [0-9]* elements" -w st2 wait 'role=button' --timeout=5000
 check "network to go quiet" -w st2 wait --load
 check "Page" -w st2 emulate --color-scheme light

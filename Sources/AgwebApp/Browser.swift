@@ -330,6 +330,10 @@ final class Browser {
             guard args.indices.contains(i) else { throw Failure("missing <\(name)>") }
             return args[i]
         }
+        // These read no target as the whole page; an empty one is an unset shell variable, not that.
+        if ["snapshot", "markdown", "highlight"].contains(request.command), let target = args.first, target.trimmingCharacters(in: .whitespaces).isEmpty {
+            throw Failure("invalid selector \"\(target)\": \(PageScripts.emptyTarget)")
+        }
 
         switch request.command {
         case "dashboard":

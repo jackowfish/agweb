@@ -1,6 +1,8 @@
 // Function bodies for callAsyncJavaScript. They run in the isolated "agweb" content world, which shares the DOM
 // with the page but not its globals, so the page cannot see or clobber window.__agweb.
 public enum PageScripts {
+    /// Why an empty target fails; the page's `find` and the commands that read no target as the whole page share it.
+    public static let emptyTarget = "the target is empty (an unset shell variable?); use a ref from snapshot (e12), role=…, text=… or CSS"
     /// Targets: a snapshot ref (`e12`), `role=button[name="Save"]` (name: case-insensitive substring), `text=Save`
     /// (substring) or `text="Save"` (exact), else a CSS selector. Role and text targets must match exactly one
     /// visible element, so a click never lands on the wrong one of several.
@@ -152,6 +154,12 @@ public enum PageScripts {
     // `<target> >> nth=N` picks one of several matches, counting from 0; -1 is the last.
     const find = (target) => {
       const nth = /^(.*?)\\s*>>\\s*nth=(-?\\d+)$/.exec(target);
+      // Usually an unset shell variable (`fill "$REF" x`); querySelectorAll('') would only say "invalid selector".
+      if (!(nth ? nth[1] : target).trim()) {
+        const e = new Error(`invalid selector ${JSON.stringify(target)}: \(emptyTarget)`);
+        e.name = 'SyntaxError';
+        throw e;
+      }
       if (!nth) return findOne(target);
       const els = /^(role|text)=/.test(nth[1]) ? matchesOf(nth[1]) : css(nth[1]);
       const el = els.at(Number(nth[2]));
