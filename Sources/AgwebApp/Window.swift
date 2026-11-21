@@ -396,13 +396,15 @@ struct SoundButton: View {
     }
 }
 
-/// Shown while the person muted the tab from its menu; an agent's hidden tabs, muted by default, show nothing.
+/// Shown while the tab is muted: by the person from its menu, or as an agent's hidden tab is by default.
 struct MutedIcon: View {
     let tab: Tab
 
     var body: some View {
-        if tab.personSound == false {
-            Image(systemName: "speaker.slash.fill").foregroundStyle(.secondary).help("Muted (the tab's menu unmutes it)")
+        if tab.isMuted {
+            Image(systemName: "speaker.slash.fill").foregroundStyle(.secondary)
+                .help(tab.personSound == false ? "Muted (the tab's menu unmutes it)"
+                                               : "Muted while hidden, as an agent's tabs are (the tab's menu unmutes it)")
         }
     }
 }
