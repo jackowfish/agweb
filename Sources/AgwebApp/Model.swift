@@ -659,6 +659,8 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var held = NativeInput.Held()
     /// A fixed viewport from `resize`, in CSS pixels; nil fills the window.
     @ObservationIgnored var viewportSize: CGSize?
+    /// `emulate --device iphone`: the user agent, and the viewport `--device off` puts back. Tabs it opens inherit it.
+    @ObservationIgnored var phone: (userAgent: String, viewportBefore: CGSize?)?
     /// While true, a context menu the page asks for is dropped: it would pop up on the person's screen.
     @ObservationIgnored var suppressMenus = false
     /// Where the next download goes; nil is the workspace's download folder.
@@ -1080,7 +1082,17 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                 decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+                 preferences: WKWebpagePreferences,
+                 decisionHandler outer: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        // navigator.platform has no other per-tab switch; the user agent is the web view's own.
+        if phone != nil, navigationAction.targetFrame?.isMainFrame == true {
+            let setter = NSSelectorFromString("_setCustomNavigatorPlatform:")
+            if preferences.responds(to: setter) {
+                typealias SetString = @convention(c) (AnyObject, Selector, NSString) -> Void
+                unsafeBitCast(preferences.method(for: setter), to: SetString.self)(preferences, setter, Phone.platform as NSString)
+            }
+        }
+        let decisionHandler = { (policy: WKNavigationActionPolicy) in outer(policy, preferences) }
         // Loopback, link-local and the Mac's own addresses skip the blackhole proxy an unreadable one gets.
         if Profiles.refusal(workspace.profile) != nil { return decisionHandler(.cancel) }
         // A popup gets its opener's action again; only the tab the link was in opens it elsewhere.

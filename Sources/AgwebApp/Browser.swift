@@ -117,6 +117,12 @@ final class Browser {
             workspace.tabs.append(tab)
         }
         mainWindow.add(tab.webView)
+        if let phone = opener?.phone {
+            tab.phone = (phone.userAgent, nil)
+            tab.webView.customUserAgent = phone.userAgent
+            tab.viewportSize = opener?.viewportSize
+            mainWindow.setSize(tab.webView, tab.viewportSize, centered: true)
+        }
         updateVisibility()
         scheduleSave()
         return tab
@@ -956,14 +962,18 @@ final class Browser {
             }
             return result + "\n" + describe(tab) + (await changes(tab, urlBefore: urlBefore))
         case "emulate":
-            guard let scheme = options["color-scheme"] else { throw Failure("use: agweb emulate --color-scheme dark|light|auto") }
+            let scheme = options["color-scheme"], device = options["device"]?.lowercased()
+            guard scheme != nil || device != nil else { throw Failure("use: agweb emulate --color-scheme=dark|light|auto | --device=iphone|off") }
+            guard device == nil || device == "iphone" || device == "off" else { throw Failure("--device is iphone or off") }
             // prefers-color-scheme follows the view's appearance; only this tab changes.
-            switch scheme.lowercased() {
+            switch scheme?.lowercased() {
+            case nil: break
             case "dark": webView.appearance = NSAppearance(named: .darkAqua)
             case "light": webView.appearance = NSAppearance(named: .aqua)
             case "auto", "no-preference": webView.appearance = nil
             default: throw Failure("--color-scheme is dark, light or auto")
             }
+            if let device { try await emulatePhone(tab, device == "iphone") }
             try await Task.sleep(for: .milliseconds(100))
         case "pdf":
             let path = try options["filename"] ?? { throw Failure("missing --filename") }()
@@ -1124,8 +1134,8 @@ final class Browser {
         let height = try await tab.call("return String(Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0))", world: .page)
         let full = CGSize(width: viewport.width, height: min(Double(height) ?? viewport.height, 16_384))
         let previous = tab.viewportSize
-        defer { mainWindow.setSize(tab.webView, previous) }
-        mainWindow.setSize(tab.webView, CGSize(width: full.width * scale, height: full.height * scale))
+        defer { mainWindow.setSize(tab.webView, previous, centered: tab.phone != nil) }
+        mainWindow.setSize(tab.webView, CGSize(width: full.width * scale, height: full.height * scale), centered: tab.phone != nil)
         _ = try await tab.call("await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return 'ok'")
         let config = WKSnapshotConfiguration()
         config.rect = CGRect(x: 0, y: 0, width: full.width * scale, height: full.height * scale)
@@ -1415,17 +1425,64 @@ final class Browser {
         let scale = tab.webView.pageZoom * tab.webView.magnification
         var points = CGSize(width: size.width * scale, height: size.height * scale)
         tab.viewportSize = points
-        mainWindow.setSize(tab.webView, points)
+        mainWindow.setSize(tab.webView, points, centered: tab.phone != nil)
         try await Task.sleep(for: .milliseconds(100))
         let got = try await viewportSize(tab)
         if got != size {
             points = CGSize(width: points.width + (size.width - got.width) * scale, height: points.height + (size.height - got.height) * scale)
             tab.viewportSize = points
-            mainWindow.setSize(tab.webView, points)
+            mainWindow.setSize(tab.webView, points, centered: tab.phone != nil)
             try await Task.sleep(for: .milliseconds(100))
         }
         tab.pointer = nil
         tab.events.append("viewport is \(Int(size.width))x\(Int(size.height))")
+    }
+
+    /// The user agent and navigator.platform reach the server and scripts only from the next load, so the page reloads.
+    private func emulatePhone(_ tab: Tab, _ on: Bool) async throws {
+        if on {
+            let before = tab.phone
+            if tab.phone == nil {
+                let getter = NSSelectorFromString("_userAgent")
+                typealias Get = @convention(c) (AnyObject, Selector) -> NSString?
+                let desktop = tab.webView.responds(to: getter)
+                    ? unsafeBitCast(tab.webView.method(for: getter), to: Get.self)(tab.webView, getter) as String? : nil
+                tab.phone = (Phone.userAgent(desktop: desktop ?? ""), tab.viewportSize)
+            }
+            do {
+                try await resize(tab, to: CGSize(width: Phone.viewport.width, height: Phone.viewport.height))
+            } catch {
+                // A failed command leaves the tab as it was, not an iPhone from its next load on.
+                tab.phone = before
+                throw error
+            }
+            tab.webView.customUserAgent = tab.phone?.userAgent
+        } else {
+            guard let phone = tab.phone else { return tab.events.append("no device was emulated in this tab") }
+            tab.phone = nil
+            tab.webView.customUserAgent = nil
+            tab.viewportSize = phone.viewportBefore
+            mainWindow.setSize(tab.webView, phone.viewportBefore)
+            tab.pointer = nil
+        }
+        if tab.webView.url != nil {
+            // A form's result comes back by its address, as an unloaded tab's does: a reload would send the form again.
+            if tab.postedPage, let address = URL(string: tab.url) {
+                tab.webView.load(URLRequest(url: address))
+            } else {
+                tab.resubmitAllowed = true
+                if tab.webView.reload() == nil { tab.resubmitAllowed = false }
+            }
+            await tab.settle()
+        }
+        guard on else { return tab.events.append("device emulation off; page reloaded") }
+        tab.events.append("emulating an iPhone: 390x844 viewport, iPhone Safari user agent, navigator.platform iPhone"
+            + (tab.webView.url != nil ? "; page reloaded" : "")
+            + ". Not emulated: touch events, (hover: none) and (pointer: coarse), devicePixelRatio, screen size")
+        let viewportMeta = try? await tab.call("return String(!!document.querySelector('meta[name=viewport]'))", world: .page, timeout: 2)
+        if viewportMeta == "false" {
+            tab.events.append("this page has no <meta name=viewport>: an iPhone lays it out 980 px wide and zooms out, but here it is 390 px wide")
+        }
     }
 
     private func tabAt(_ text: String, in workspace: Workspace) throws -> Tab {

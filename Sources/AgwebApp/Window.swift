@@ -178,16 +178,18 @@ final class MainWindow: NSObject, NSWindowDelegate {
 
     /// A web view `size` points across and that tall below the toolbar band, pinned to the top left; nil fills the
     /// content area again. Larger than the window is clipped on screen, not in snapshots.
-    func setSize(_ webView: WKWebView, _ size: CGSize?) {
+    /// `centered`: in the middle of the window's width (an emulated phone), else at the top left.
+    func setSize(_ webView: WKWebView, _ size: CGSize?, centered: Bool = false) {
         guard let host = webView.superview else { return }
         guard let size else {
             webView.frame = host.bounds
             webView.autoresizingMask = [.width, .height]
             return
         }
-        webView.autoresizingMask = [.maxXMargin, .minYMargin]
-        let height = size.height + topInset
-        webView.frame = NSRect(x: 0, y: host.bounds.height - height, width: size.width, height: height)
+        webView.autoresizingMask = centered ? [.minXMargin, .maxXMargin, .minYMargin] : [.maxXMargin, .minYMargin]
+        // Below the toolbar, not under it: a narrow page behind the toolbar's glass showed as a strip of its colour.
+        let x = centered ? max(0, ((host.bounds.width - size.width) / 2).rounded()) : 0
+        webView.frame = NSRect(x: x, y: host.bounds.height - topInset - size.height, width: size.width, height: size.height)
     }
 
     /// The dashboard hides the address item and shows it again a moment after it closes, so the field may join the

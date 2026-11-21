@@ -178,6 +178,7 @@ agweb list # who is here
 agweb dashboard --filename=grid.png # every tab at once, to check on parallel work; dashboard --hide
 agweb -w t show # put your tab in view for the person, without activating the window
 agweb -w t scroll-into-view e40 # glide an element on screen for a screenshot or the person; actions scroll there by themselves
+agweb -w t emulate --device=iphone # check the phone layout: 390x844 and an iPhone user agent, reloads; no touch or hover/pointer media
 ```
 
 `--instant` skips human pacing for pointer verbs and `type`. `type` types where the focus is; `fill <target> <text>` types into an element. The rest (cookies, `state-save`/`state-load`, `pdf`, `emulate`, `drag`, `mousewheel`) is in `agweb help [command]`.

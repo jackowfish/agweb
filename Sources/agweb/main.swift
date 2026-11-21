@@ -53,6 +53,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 --single-page: the screen view on one page (default .agweb/page-<time>.pdf)
   resize <w> <h>                set this tab's viewport size in CSS pixels; the shared window stays as it is
   emulate --color-scheme=dark   prefers-color-scheme for this tab: dark, light or auto
+  emulate --device=iphone       this tab as an iPhone shows it: 390x844 viewport, iPhone user agent, then a reload;
+                                tabs it opens inherit it (off undoes it; touch and hover/pointer media stay the Mac's)
   wait <ms> | <target> [--gone | --enabled] | --text=… | --url=… | --load   [--timeout=ms, default 30000]
                                 sleep, or wait until an element shows (or leaves), text or a URL appears, or the
                                 page has loaded with no fetch/XHR in flight
@@ -143,7 +145,7 @@ let flags: Set = ["js", "help", "instant", "headed", "full-page", "submit", "raw
                   "httpOnly", "secure", "gone", "load", "single-page", "check", "all", "enabled", "version", "force"]
 let valued: Set = ["profile", "workspace", "max-idle", "filename", "size", "filter", "status", "body", "content-type",
                    "header", "domain", "path", "expires", "sameSite", "style", "description", "duration", "browser", "text", "url",
-                   "timeout", "color-scheme", "format", "download-dir", "secret-cmd", "secret-file", "max-results", "camera", "mic", "accuracy"]
+                   "timeout", "color-scheme", "device", "format", "download-dir", "secret-cmd", "secret-file", "max-results", "camera", "mic", "accuracy"]
 let short = ["-w": "workspace", "-p": "profile"]
 func setOption(_ name: String, _ value: String) {
     // --header repeats; the app splits on newlines.

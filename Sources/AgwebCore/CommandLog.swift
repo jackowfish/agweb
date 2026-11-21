@@ -8,7 +8,7 @@ public enum CommandLog {
     public static let textCommands: Set<String> = ["type", "eval", "fill", "select", "dialog-accept", "cookie-set", "clipboard-set", "state-load", "route"]
     /// Options logged with their value; any other is logged as present only (route's --header and --body carry tokens).
     static let shownOptions: Set<String> = ["timeout", "text", "url", "filename", "path", "profile", "max-results", "download-dir", "filter",
-                                            "color-scheme", "button", "delay", "width", "height", "status"]
+                                            "color-scheme", "device", "button", "delay", "width", "height", "status"]
 
     public static func line(_ request: Request, ok: Bool, output: String, at time: Date, seconds: Double) -> String {
         var args = request.args
