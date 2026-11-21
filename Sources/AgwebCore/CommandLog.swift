@@ -17,7 +17,8 @@ public enum CommandLog {
             args = kept + (args.count > kept.count ? ["<hidden>"] : [])
         }
         var entry: [String: Any] = [
-            "time": ISO8601DateFormatter().string(from: time),
+            // A format style, not a new ISO8601DateFormatter per line, which showed in the main thread's profile under load.
+            "time": time.formatted(.iso8601),
             "workspace": request.workspace,
             "command": request.command,
             "args": args.map(withoutQuery),
