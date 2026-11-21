@@ -501,6 +501,17 @@ private struct LoginBar: View {
 final class AgentWindow: NSWindow {
     override var isKeyWindow: Bool { super.isKeyWindow || !NSApp.isActive }
 
+    /// While an agent's key or mouse press holds the keyboard (Browser.withKeyboard), another tab's page may not take
+    /// it (WebKit asks for a page's focus() or a press into a field): WebKit would reset the agent's rich-editor caret
+    /// mid-word. The person's own clicks and keys, and the toolbar's fields, always get it.
+    var keyboardHolder: NSResponder?
+    private var personEvents = 0
+
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        if let holder = keyboardHolder, responder !== holder, personEvents == 0, responder is WKWebView { return false }
+        return super.makeFirstResponder(responder)
+    }
+
     /// The person's mouse buttons 4 and 5 go back and forward, as in Safari; WebKit ignores them. Agents' clicks
     /// go to the web view directly and never pass here.
     var onSideButton: ((_ forward: Bool) -> Void)?
@@ -524,6 +535,8 @@ final class AgentWindow: NSWindow {
             if event.type == .otherMouseDown { onSideButton?(event.buttonNumber == 4) }
             return
         }
+        personEvents += NativeInput.isSent(event) ? 0 : 1
+        defer { personEvents -= NativeInput.isSent(event) ? 0 : 1 }
         super.sendEvent(event)
     }
 

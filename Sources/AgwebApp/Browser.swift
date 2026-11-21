@@ -23,6 +23,9 @@ final class Browser {
     var dashboardNap: Task<Void, Never>?
     var dashboardObserver: NSObjectProtocol?
     var dashboardRetake: Task<Void, Never>?
+    /// The window has one keyboard: an agent's key or insertion holds it, and the next waits (withKeyboard).
+    private var keyboardBusy = false
+    private var keyboardWaiters: [CheckedContinuation<Void, Never>] = []
     /// What had the person's focus in the displayed tab when the window was covered (Visibility.swift).
     weak var coveredResponder: NSView?
     /// The tab the person last saw in the window (Visibility.swift).
@@ -331,6 +334,8 @@ final class Browser {
                     captureAfterCommand(tab)
                     Task { await tab.captureSession() }
                 }
+                // A click, fill or script may have moved the caret since the last key: the saved one is stale.
+                if Self.caretCommands.contains(request.command) { workspace.actedOn?.caretKept = false }
                 workspace.actedOn = nil
                 updateVisibility()
             }
@@ -855,7 +860,7 @@ final class Browser {
             let viewport = try await viewportSize(tab)
             let at = tab.pointer ?? CGPoint(x: viewport.width / 2, y: viewport.height / 2)
             if button == .right { suppressMenus(tab) }
-            try NativeInput.button(webView, button, down: down, at: at, viewportHeight: viewport.height, held: tab.held)
+            try await withMouse(tab) { try NativeInput.button(webView, button, down: down, at: at, viewportHeight: viewport.height, held: tab.held) }
             tab.held.button = down ? button : nil
             if down { tab.lastClick = (at, ProcessInfo.processInfo.systemUptime) }
             if !down { await tab.settle() }
@@ -893,7 +898,7 @@ final class Browser {
             // Keys go to the focused frame, a cross-origin one included.
             let frame = await tab.focusedFrame()
             if instant || text.isEmpty {
-                _ = try await tab.call(PageScripts.insertText, ["text": text], frame: frame)
+                try await insertText(tab, text, frame: frame)
             } else {
                 // Real key presses, so pages see keydown and keyup with a person's rhythm, not text appearing by itself;
                 // a character with no US key is inserted as text.
@@ -908,7 +913,7 @@ final class Browser {
                         if let combo = NativeInput.combo(for: char) {
                             try await stroke(tab, combo, hold: hold)
                         } else {
-                            _ = try await tab.call(PageScripts.insertText, ["text": String(char)], frame: frame)
+                            try await insertText(tab, String(char), frame: frame)
                         }
                     } catch {
                         throw Failure("typed \(i) of \(chars.count) characters: \(error)")
@@ -1019,6 +1024,12 @@ final class Browser {
         return describe(tab)
     }
 
+    /// Commands that can move a page's caret, so the one kept after the agent's last key no longer holds (reading
+    /// ones, snapshot or wait, leave it).
+    /// (A mouse press decides it itself, withMouse.)
+    static let caretCommands: Set<String> = ["fill", "select", "eval", "js", "goto", "open", "reload", "go-back", "go-forward",
+                                             "tab-select", "tab-new", "tab-close", "state-load"]
+
     /// A native key press (or only its down or up half) on the tab, giving the keyboard back to whoever had it.
     private func pressKey(_ tab: Tab, _ combo: String, phases: [NSEvent.EventType] = [.keyDown, .keyUp], instant: Bool = false) async throws {
         let focused = try await tab.call(PageScripts.focusedKind, frame: await tab.focusedFrame())
@@ -1052,11 +1063,86 @@ final class Browser {
         }
     }
 
+    /// execCommand inserts text only where the page's selection is, and WebKit clears it when the tab's view gives up
+    /// the keyboard (the window's first responder): after one of type's own key presses in a tab nobody shows, or
+    /// another workspace's. So the tab takes the keyboard as a stroke does and hands it back after. Only "no field"
+    /// is tried again, a few times while another workspace's key takes it back, never a timeout: a late script could
+    /// insert twice.
+    private func insertText(_ tab: Tab, _ text: String, frame: Frame?) async throws {
+        try await withKeyboard(tab) { try await insertTextHolding(tab, text, frame: frame) }
+    }
+
+    private func insertTextHolding(_ tab: Tab, _ text: String, frame: Frame?) async throws {
+        guard tab.webView.window != nil else { throw Failure("the tab was closed") }
+        let window = mainWindow.window
+        var previous = window.firstResponder
+        if let editor = previous as? NSTextView, editor.isFieldEditor { previous = editor.delegate as? NSResponder }
+        if previous is WKWebView { previous = model.displayedTab?.webView }
+        // The person's keys landing here meanwhile are not theirs (NativeInput.stroking), as during a stroke.
+        NativeInput.stroking.insert(ObjectIdentifier(tab.webView))
+        defer { NativeInput.stroking.remove(ObjectIdentifier(tab.webView)) }
+        var failure: Error?
+        for attempt in 0..<5 {
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(50)) }
+            await takeKeyboard(tab)
+            do {
+                // Long enough for a big text in a heavy editor: an agent retrying after a timeout would insert it twice.
+                _ = try await tab.call(PageScripts.insertText, ["text": text], frame: frame, timeout: 10)
+                failure = nil
+                break
+            } catch {
+                failure = error
+                guard "\(error)".contains("no editable element is focused") else { break }
+            }
+        }
+        if let previous, previous !== tab.webView, window.firstResponder === tab.webView {
+            tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
+            handBack(to: previous)
+        }
+        if let failure { throw failure }
+    }
+
+    /// The keyboard goes back to whoever had it, unless that left the window or was hidden meanwhile (the find bar
+    /// closed). The person's own click or key meanwhile already took it (AgentWindow), so it is not the tab's to give.
+    private func handBack(to previous: NSResponder) {
+        (mainWindow.window as? AgentWindow)?.keyboardHolder = nil
+        if let view = previous as? NSView, view.window !== mainWindow.window || view.isHiddenOrHasHiddenAncestor { return }
+        mainWindow.window.makeFirstResponder(previous)
+    }
+
+    /// Makes the tab first responder, if it isn't, with a rich editor's caret where the last hand-back left it.
+    private func takeKeyboard(_ tab: Tab) async {
+        guard mainWindow.window.firstResponder !== tab.webView else { return }
+        mainWindow.window.makeFirstResponder(tab.webView)
+        // The restore must come after WebKit has handled the focus, which can take over a second when busy.
+        await tab.activityStateApplied(timeout: 5)
+        if tab.caretKept { _ = try? await tab.call(PageScripts.keepSelection, ["mode": "restore"], timeout: 2) }
+    }
+
     /// Sends a key to the tab, held down for `hold` seconds when both phases are sent, as a finger holds it. The tab
     /// is first responder only while WebKit takes the key, and gets the keyboard back right away, not after the
     /// page settles: the person may be typing.
     private func stroke(_ tab: Tab, _ combo: String, phases: [NSEvent.EventType] = [.keyDown, .keyUp], hold: Double,
                         then: () async throws -> Void = {}) async throws {
+        try await withKeyboard(tab) { try await strokeHolding(tab, combo, phases: phases, hold: hold, then: then) }
+    }
+
+    /// One agent's key or insertion at a time, across workspaces: another's landing between this one taking the
+    /// keyboard and its key would move a rich editor's caret, or leave the text with no selection to go into.
+    private func withKeyboard(_ tab: Tab, _ body: () async throws -> Void) async throws {
+        while keyboardBusy { await withCheckedContinuation { keyboardWaiters.append($0) } }
+        keyboardBusy = true
+        (mainWindow.window as? AgentWindow)?.keyboardHolder = tab.webView
+        defer {
+            (mainWindow.window as? AgentWindow)?.keyboardHolder = nil
+            keyboardBusy = false
+            if !keyboardWaiters.isEmpty { keyboardWaiters.removeFirst().resume() }
+        }
+        try await body()
+    }
+
+    private func strokeHolding(_ tab: Tab, _ combo: String, phases: [NSEvent.EventType], hold: Double,
+                               then: () async throws -> Void) async throws {
         let window = mainWindow.window
         var previous = window.firstResponder
         if let editor = previous as? NSTextView, editor.isFieldEditor { previous = editor.delegate as? NSResponder }
@@ -1064,6 +1150,8 @@ final class Browser {
         if previous is WKWebView { previous = model.displayedTab?.webView }
         NativeInput.stroking.insert(ObjectIdentifier(tab.webView))
         defer { NativeInput.stroking.remove(ObjectIdentifier(tab.webView)) }
+        guard tab.webView.window != nil else { throw Failure("tab has no window to receive input") }
+        await takeKeyboard(tab)
         if phases.count == 2, hold > 0 {
             try NativeInput.press(tab.webView, combo: combo, phases: [.keyDown], held: &tab.held)
             try? await Task.sleep(for: .seconds(hold))
@@ -1074,9 +1162,11 @@ final class Browser {
         var failure: Error?
         do { try await then() } catch { failure = error }
         // An answer from the page comes after WebKit has handed back any key it left alone (NativeInput.sentKeys).
-        if (try? await tab.call("return ''", timeout: 2)) != nil { NativeInput.settled(tab.webView) }
+        // It also keeps a rich editor's caret for the next key, before the keyboard goes back.
+        tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
+        if tab.caretKept { NativeInput.settled(tab.webView) }
         try? await Task.sleep(for: .milliseconds(50))
-        if let previous, previous !== tab.webView, window.firstResponder === tab.webView { window.makeFirstResponder(previous) }
+        if let previous, previous !== tab.webView, window.firstResponder === tab.webView { handBack(to: previous) }
         if let failure { throw failure }
     }
 
@@ -1568,14 +1658,41 @@ final class Browser {
         }
         if !instant { try await Task.sleep(for: .seconds(tab.motion.dwell())) }
         if button == .right { suppressMenus(tab) }
-        for count in 1...clicks {
-            if count > 1, !instant { try await Task.sleep(for: .seconds(tab.motion.jitter(0.09, 0.02))) }
-            try NativeInput.button(tab.webView, button, down: true, at: point, viewportHeight: landed.viewport.height, clickCount: count, held: tab.held)
-            tab.lastClick = (point, ProcessInfo.processInfo.systemUptime)
-            // A short timeout: the press waits on this frame.
-            if !instant { await tab.workspace.recorder?.capture(timeout: 0.3) }
-            if !instant { try await Task.sleep(for: .seconds(tab.motion.jitter(0.095, 0.015))) }
-            try NativeInput.button(tab.webView, button, down: false, at: point, viewportHeight: landed.viewport.height, clickCount: count, held: tab.held)
+        try await withMouse(tab) {
+            for count in 1...clicks {
+                if count > 1, !instant { try await Task.sleep(for: .seconds(tab.motion.jitter(0.09, 0.02))) }
+                try NativeInput.button(tab.webView, button, down: true, at: point, viewportHeight: landed.viewport.height, clickCount: count, held: tab.held)
+                tab.lastClick = (point, ProcessInfo.processInfo.systemUptime)
+                // A short timeout: the press waits on this frame.
+                if !instant { await tab.workspace.recorder?.capture(timeout: 0.3) }
+                if !instant { try await Task.sleep(for: .seconds(tab.motion.jitter(0.095, 0.015))) }
+                try NativeInput.button(tab.webView, button, down: false, at: point, viewportHeight: landed.viewport.height, clickCount: count, held: tab.held)
+            }
+        }
+    }
+
+    /// A press into a field makes WebKit give the tab the keyboard (the window's first responder), from whoever had
+    /// it: the person typing in another tab or the address field, or another agent's tab mid-word. So a press waits
+    /// its turn like a key, keeps the caret it set in a rich editor for the next key (taking the keyboard back puts it
+    /// at the start), and hands the keyboard back.
+    private func withMouse(_ tab: Tab, _ body: () async throws -> Void) async throws {
+        try await withKeyboard(tab) {
+            let window = mainWindow.window
+            var previous = window.firstResponder
+            if let editor = previous as? NSTextView, editor.isFieldEditor { previous = editor.delegate as? NSResponder }
+            if previous is WKWebView { previous = model.displayedTab?.webView }
+            var failure: Error?
+            do { try await body() } catch { failure = error }
+            // A press into a field asks for the keyboard from the page's process: an answer from the page comes after it.
+            _ = try? await tab.call("return ''", timeout: 2)
+            if window.firstResponder === tab.webView, let previous, previous !== tab.webView {
+                tab.caretKept = (try? await tab.call(PageScripts.keepSelection, ["mode": "save"], timeout: 2)) != nil
+                handBack(to: previous)
+            } else if window.firstResponder === tab.webView {
+                // The tab had the keyboard already: the caret the press set stays live, and the one kept before is stale.
+                tab.caretKept = false
+            }
+            if let failure { throw failure }
         }
     }
 
@@ -1595,6 +1712,7 @@ final class Browser {
         guard (0...end.viewport.width).contains(end.center.x), (0...end.viewport.height).contains(end.center.y) else {
             throw Failure("\(target) is off screen while \(source) is on it; drag in steps")
         }
+        try await withMouse(tab) {
         try NativeInput.button(tab.webView, down: true, at: from, viewportHeight: landed.viewport.height, held: tab.held)
         tab.lastClick = (from, ProcessInfo.processInfo.systemUptime)
         if !instant { try await Task.sleep(for: .seconds(tab.motion.jitter(0.12, 0.03))) }
@@ -1609,6 +1727,7 @@ final class Browser {
         }
         if !instant { try await Task.sleep(for: .seconds(tab.motion.jitter(0.1, 0.03))) }
         try NativeInput.button(tab.webView, down: false, at: to, viewportHeight: end.viewport.height, held: tab.held)
+        }
     }
 
     /// Scroll events at the pointer, in a person's wheel ticks of about 60 px unless `instant`.

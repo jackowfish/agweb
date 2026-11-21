@@ -796,6 +796,25 @@ public enum PageScripts {
     return 'ok';
     """
 
+    /// A rich editor's caret across a hand-back of the keyboard: WebKit clears the selection when the tab's view gives
+    /// it up and, taking it again, restores a text field's but puts a contenteditable's caret at its start, so a
+    /// background tab's typing came out backwards. `save` after a key, `restore` before the next, only if
+    /// no other command (a click, fill or script that may move the caret) ran on the tab since (Tab.caretKept).
+    public static let keepSelection = """
+    const deep = (doc) => { const a = doc.activeElement; try { if ((a?.tagName === 'IFRAME' || a?.tagName === 'FRAME') && a.contentDocument) return deep(a.contentDocument); } catch {} return doc; };
+    const doc = deep(document), el = doc.activeElement, sel = doc.getSelection();
+    if (!el?.isContentEditable || !sel) return '';
+    if (mode === 'save') {
+      window.__agwebCaret = sel.rangeCount && el.contains(sel.getRangeAt(0).startContainer) ? sel.getRangeAt(0).cloneRange() : null;
+    } else if (window.__agwebCaret && el.contains(window.__agwebCaret.startContainer)) {
+      // WebKit moves the caret to the editor's start from a zero-delay timer after the tab takes the keyboard: after it.
+      await new Promise(r => setTimeout(r, 0));
+      sel.removeAllRanges();
+      sel.addRange(window.__agwebCaret);
+    }
+    return '';
+    """
+
     public static let insertText = """
     const focusedDocument = (doc) => { const a = doc.activeElement; try { if ((a?.tagName === 'IFRAME' || a?.tagName === 'FRAME') && a.contentDocument) return focusedDocument(a.contentDocument); } catch {} return doc; };
     if (!focusedDocument(document).execCommand('insertText', false, text)) throw new Error('no editable element is focused');

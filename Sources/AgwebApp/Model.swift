@@ -664,6 +664,9 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
     /// Keys and a button the agent is holding down (keydown, mousedown).
     @ObservationIgnored var held = NativeInput.Held()
+    /// A rich editor's caret was saved after the agent's last key here, and nothing else ran on the tab since
+    /// (Browser.takeKeyboard).
+    @ObservationIgnored var caretKept = false
     /// A fixed viewport from `resize`, in CSS pixels; nil fills the window.
     @ObservationIgnored var viewportSize: CGSize?
     /// `emulate --device iphone`: the user agent, and the viewport `--device off` puts back. Tabs it opens inherit it.
@@ -986,12 +989,12 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     }
 
     /// Waits until WebKit has sent the page its visibility change; the next script is ordered behind it.
-    func activityStateApplied() async {
+    func activityStateApplied(timeout: Double = 1) async {
         let selector = NSSelectorFromString("_doAfterActivityStateUpdate:")
         guard webView.responds(to: selector) else { return }
         typealias Call = @convention(c) (AnyObject, Selector, @escaping @convention(block) () -> Void) -> Void
         let call = unsafeBitCast(webView.method(for: selector), to: Call.self)
-        _ = try? await withTimeout(1, "waking the tab") { [webView] in
+        _ = try? await withTimeout(timeout, "waking the tab") { [webView] in
             await withCheckedContinuation { continuation in call(webView, selector) { continuation.resume() } }
         }
     }
