@@ -528,7 +528,12 @@ final class Browser {
             return tabList(workspace)
         case "tab-new":
             let tab = addTab(to: workspace)
-            if let url = args.first { try await tab.goto(try Address.url(url)) }
+            if let url = args.first {
+                // Loading it is the agent's work, though nothing wakes it: the green dot shows meanwhile.
+                let address = try Address.url(url)
+                workspace.working(on: tab)
+                try await tab.goto(address)
+            }
             return tabList(workspace)
         case "tab-select":
             drive(try tabAt(try arg(0, "index"), in: workspace))

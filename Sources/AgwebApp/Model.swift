@@ -48,7 +48,22 @@ final class Workspace: Identifiable {
         didSet {
             guard busy != oldValue else { return }
             for tab in tabs { tab.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = busy }
+            guard !busy else { return }
+            let generation = workingGeneration
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(600))
+                if let self, self.workingGeneration == generation { self.workingTabID = nil }
+            }
         }
+    }
+    /// The tab with the green dot in the sidebar and dashboard: the one the running command acts on (Browser.wake),
+    /// held 0.6 s after the command so a run of quick ones reads as one steady dot. Commands that touch no page
+    /// (`cookie-list`, `tab-list`) light none.
+    private(set) var workingTabID: Int?
+    @ObservationIgnored private var workingGeneration = 0
+    func working(on tab: Tab) {
+        workingGeneration += 1
+        if workingTabID != tab.id { workingTabID = tab.id }
     }
     /// What the agent last ran here and when, for the dashboard.
     var lastCommand: String?

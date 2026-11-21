@@ -297,7 +297,8 @@ struct SidebarView: View {
                 Section {
                     ForEach(workspace.tabs) { tab in
                         // The person's own workspaces have no agent tab: none of theirs is dimmed.
-                        TabRow(tab: tab, driven: workspace.currentID == nil || tab.id == workspace.currentID, agent: workspace.currentID != nil) { model.onCloseTab?(tab) }
+                        TabRow(tab: tab, driven: workspace.currentID == nil || tab.id == workspace.currentID, agent: workspace.currentID != nil,
+                               working: workspace.workingTabID == tab.id) { model.onCloseTab?(tab) }
                             .tag(tab.id)
                             .contextMenu {
                                 Button("Close Tab") { model.onCloseTab?(tab) }
@@ -335,7 +336,6 @@ private struct WorkspaceHeader: View {
                     .help("Profile \(profile): logins shared by every workspace using it")
             }
             Spacer()
-            if workspace.busy { ProgressView().controlSize(.mini) }
         }
         .contextMenu {
             Button("New Tab") { model.onNewTab?(workspace) }
@@ -348,6 +348,8 @@ private struct TabRow: View {
     let tab: Tab
     let driven: Bool
     let agent: Bool
+    /// An agent's command is running on this tab (or just ended).
+    let working: Bool
     let close: () -> Void
     @State private var hovering = false
 
@@ -360,15 +362,28 @@ private struct TabRow: View {
                 .foregroundStyle(driven ? .primary : .secondary)
                 .help(driven && agent ? "The tab this workspace's agent drives" : "")
             Spacer(minLength: 0)
-            if let asking = tab.asking {
-                Image(systemName: "hand.raised.fill").foregroundStyle(.orange).help("The agent asks you: \(asking)")
-            }
+            ActivityDot(tab: tab, working: working)
             Button(action: close) { Image(systemName: "xmark").font(.caption2) }
                 .buttonStyle(.borderless)
                 .opacity(hovering ? 1 : 0)
                 .help("Close tab")
         }
         .onHover { hovering = $0 }
+    }
+}
+
+/// Orange while the agent waits for the person (`ask`), green while its command works on the tab; the sidebar and
+/// the dashboard.
+struct ActivityDot: View {
+    let tab: Tab
+    let working: Bool
+
+    var body: some View {
+        if let asking = tab.asking {
+            Circle().fill(Color.orange).frame(width: 7, height: 7).help("The agent asks you: \(asking)")
+        } else if working {
+            Circle().fill(Color.green).frame(width: 7, height: 7).help("The agent is working on this tab")
+        }
     }
 }
 

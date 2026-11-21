@@ -159,7 +159,7 @@ private struct TabTile: View {
                                                                         lineWidth: displayed ? 2 : 1))
                 .overlay(alignment: .bottom) {
                     if let asking = tab.asking {
-                        Label { Text(asking).lineLimit(2) } icon: { Image(systemName: "hand.raised.fill").foregroundStyle(.orange) }
+                        Label { Text(asking).lineLimit(2) } icon: { Circle().fill(Color.orange).frame(width: 7, height: 7) }
                             .font(.system(size: 11 * scale))
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(.regularMaterial, in: Capsule()).padding(8)
@@ -181,24 +181,26 @@ private struct TabTile: View {
                     .padding(6)
                 }
             HStack(spacing: 6) {
-                Circle().fill(driven ? Color.green : Color.clear).frame(width: 6, height: 6)
+                // As in the sidebar: the agent's tab in the normal color, its other tabs dimmed.
                 Text(tab.title.isEmpty ? (tab.url.isEmpty ? "New tab" : tab.url) : tab.title).lineLimit(1).truncationMode(.tail)
+                    .foregroundStyle(driven || workspace.currentID == nil ? .primary : .secondary)
+                Spacer(minLength: 0)
+                // Both truncate on a narrow tile, so neither the title nor the workspace is squeezed to "…" alone.
+                HStack(spacing: 6) {
+                    Label(workspace.name, systemImage: "square.stack").lineLimit(1)
+                    if let profile = workspace.profile { Label(profile, systemImage: "person.crop.circle").lineLimit(1) }
+                }
+                .font(.system(size: 10 * scale)).foregroundStyle(.secondary)
+                ActivityDot(tab: tab, working: workspace.workingTabID == tab.id)
             }
             .font(.system(size: 13 * scale))
-            HStack(spacing: 6) {
-                Label(workspace.name, systemImage: "square.stack").lineLimit(1)
-                if let profile = workspace.profile { Label(profile, systemImage: "person.crop.circle").lineLimit(1) }
-                Spacer(minLength: 0)
-                if workspace.busy { ProgressView().controlSize(.mini) }
-            }
-            .font(.system(size: 10 * scale)).foregroundStyle(.secondary)
             if let usage {
                 Text(usage.label + (shared ? " · shared" : "")).font(.system(size: 10 * scale)).monospacedDigit().foregroundStyle(.secondary)
                     .help(shared ? "This page shares its process with another tab, so both show the same numbers" : "This page's process")
             }
             if driven, let last = workspace.lastCommand, let at = workspace.lastCommandAt {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("\(last) · \(Self.ago(at, context.date))").font(.system(size: 10 * scale)).foregroundStyle(.tertiary).lineLimit(1)
+                    Text("\(last) · \(Self.ago(at, context.date))").font(.system(size: 10 * scale)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
         }
