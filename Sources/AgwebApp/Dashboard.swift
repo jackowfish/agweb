@@ -169,6 +169,8 @@ private struct TabTile: View {
     /// The Settings text size; macOS text styles have fixed sizes, so these are the styles' sizes scaled.
     let scale: CGFloat
     let close: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var hovering = false
 
     var body: some View {
         let workspace = tab.workspace
@@ -178,7 +180,10 @@ private struct TabTile: View {
                 .aspectRatio(16 / 10, contentMode: .fit)
                 .overlay(alignment: .top) {
                     if let image = tab.thumbnail {
+                        // A white page glares on the dark dashboard: dimmed there, full brightness while pointed at.
                         Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                            .overlay(Color.black.opacity(colorScheme == .dark && !hovering ? 0.25 : 0).allowsHitTesting(false))
+                            .animation(.easeOut(duration: 0.15), value: hovering)
                     } else {
                         Image(systemName: "globe").font(.system(size: 26 * scale)).foregroundStyle(.tertiary).frame(maxHeight: .infinity)
                     }
@@ -233,6 +238,7 @@ private struct TabTile: View {
                 Text("\(last) · \(Self.ago(at, max(now, at)))").font(.system(size: 10 * scale)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
+        .onHover { hovering = $0 }
     }
 
     private static func ago(_ date: Date, _ now: Date) -> String {
