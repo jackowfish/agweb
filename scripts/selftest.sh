@@ -613,6 +613,10 @@ fails "no visible element matches role=heading" -w st2 eval '(el) => 1' 'role=he
 fails "role=heading\[level=2\]" -w st2 wait 'role=heading[level=x]' --timeout=1000
 fails "put statements in" -w st2 eval 'a = 1; a'
 fails "JSON Parse error: Unexpected identifier \"x\"$" -w st2 eval '() => JSON.parse("x")'
+fails "SyntaxError" -w st2 eval "'abc"
+lacks "Script error" -w st2 console error
+check "Page" -w st2 eval "() => { dispatchEvent(new ErrorEvent('error', { message: 'Script error.' })) }"
+check "pageerror: Script error. (at :0)" -w st2 console error
 fails '^Error: invalid selector "": the target is empty' -w st2 wait '' --timeout=5000
 fails 'invalid selector "  ": the target is empty' -w st2 fill '  ' hello
 fails 'invalid selector " >> nth=0": the target is empty' -w st2 click ' >> nth=0'

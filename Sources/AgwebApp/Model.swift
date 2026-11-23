@@ -619,6 +619,17 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     @ObservationIgnored var snapshots: [String: (doc: String, tree: String)] = [:]
     /// Console errors since the last reply, for the hint under ### Page.
     @ObservationIgnored var unreadErrors = 0
+    /// Console lines ever appended, so a command can tell which came in during it.
+    @ObservationIgnored var consoleTotal = 0
+
+    /// WebKit posts "pageerror: Script error. (at :0)" for an eval that doesn't parse, before its reply: take out the
+    /// one that came in since `since` (a `consoleTotal`), so it doesn't read as the page's.
+    func forgetEvalError(since: Int) {
+        if let index = console.suffix(min(consoleTotal - since, console.count)).lastIndex(of: "pageerror: Script error. (at :0)") {
+            console.remove(at: index)
+            unreadErrors = max(0, unreadErrors - 1)
+        }
+    }
     /// Documents, fetch and XHR calls since the page loaded: the hook's messages, as dictionaries.
     @ObservationIgnored var requests: [[String: Any]] = []
     /// What the ad blocker stopped since the page loaded, by URL; `requests` marks these.
@@ -1486,6 +1497,7 @@ final class ConsoleSink: NSObject, WKScriptMessageHandler {
             guard let tab = browser?.tab(for: message.webView) else { return }
             if let text = message.body as? String {
                 tab.console.append(text)
+                tab.consoleTotal += 1
                 if tab.console.count > 500 { tab.console.removeFirst(tab.console.count - 500) }
                 if text.hasPrefix("error") || text.hasPrefix("pageerror") { tab.unreadErrors += 1 }
             } else if let body = message.body as? [String: Any] {
