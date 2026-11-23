@@ -150,7 +150,7 @@ extension Browser {
         let config = Self.thumbnailConfig
         for tab in model.workspaces.flatMap(\.tabs) where canPicture(tab) {
             // Idle tabs keep their picture: a snapshot of a suspended tab would wake its process.
-            let active = tab.workspace.busy || tab.awakeUntil > Date()
+            let active = tab.workspace.busy || tab.awakeUntil > Date() || keptRunning(tab)
             let missing = tab.thumbnail == nil || (tab.thumbnailWhileLoading && !tab.webView.isLoading)
             let loading = tab.webView.isLoading
             guard active || missing, !loading || tab.thumbnail == nil else { continue }

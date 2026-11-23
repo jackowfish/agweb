@@ -1051,11 +1051,13 @@ echo "== a tab unused past the limit is unloaded to free memory and reloads when
     check "Unload two" -w kept open "$b/un2.html"
     check "unload off" -w kept unload off
     check "sound on: this workspace's tabs are heard" -w kept sound on
+    check "Page" -w kept eval "() => { window.hid = 0; document.addEventListener('visibilitychange', () => { if (document.hidden) hid++ }) }"
     check "Order" -w order open "$b/order.html"
     check "Posted" -w order click '#go'
     sleep 5
     check "Unload two.*(unloaded)" -w idle tab-list
     lacks "(unloaded)" -w kept tab-list
+    check '^0$' -w kept --raw eval hid
     check "(unloaded)" -w order tab-list
     check "without sending the form again" -w order eval 1
     lacks "(unloaded)" -w shown tab-list

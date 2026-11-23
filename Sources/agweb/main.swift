@@ -49,7 +49,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   upload <target> <file...>     click a file input and answer its chooser with the files
   download <target>             click and wait for the download it starts (--filename: where to save it)
   eval <js> [target]            expression or () => ... in the page, or (el) => ... on the target; prints JSON
-                                (js is the same command, for sandboxes that refuse the word eval)
+                                (js is the same command, for sandboxes that refuse the word eval); waits up to
+                                30 s for a Promise
   scroll-into-view <target>     glide an element to the middle of the viewport unless it is in view already
                                 (--instant jumps; clicks, hovers and drags scroll the same way)
   highlight [target]            outline an element on the page (--style=css; --hide removes one, or all)
@@ -112,7 +113,9 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   adblock [on|off|update]       ads and trackers are blocked with uBlock Origin's lists; off/on: for this workspace
                                 only (Settings switches every workspace); pages opened directly always load
   unload [on|off]               off: this workspace's tabs are never unloaded (by default one unused 30 minutes,
-                                per Settings, frees its memory and reloads when used)
+                                per Settings, frees its memory and reloads when used), and its current tab keeps
+                                running unseen while the window is open (by default 30 s after a command timers
+                                slow to 1/s, then it freezes; a minimized or closed window pauses every page)
   sound [on|off]                on: this workspace's tabs are heard even while hidden or behind the dashboard (by
                                 default muted unless shown); a playing tab one can hear is never unloaded
   install-cli [--check]         link /usr/local/bin/agweb to this app's CLI (also Help menu); --check says what is there

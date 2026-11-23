@@ -9,6 +9,7 @@ import WebKit
 // visibilitychange). The displayed tab counts only while some of the window can be seen (a second display counts):
 // covered by another app's window, minimized or on another Space, nobody sees it, so it is hidden and WebKit
 // throttles and later suspends it like any other, but stays unmuted: the person's music goes on behind another app.
+// A workspace with `unload off` keeps its current tab shown, muted, for pages that work on their own (a game bot, a call).
 extension Browser {
     static let awakeAfterCommand = Double(ProcessInfo.processInfo.environment["AGWEB_AWAKE_SECONDS"] ?? "") ?? 30
 
@@ -21,6 +22,9 @@ extension Browser {
         return workspace.busy || workspace.recorder != nil || holding || tab.awakeUntil > Date()
     }
 
+    /// `unload off`: the workspace's current tab keeps running unseen, for pages that work on their own.
+    func keptRunning(_ tab: Tab) -> Bool { tab.workspace.unloadOff && tab.workspace.currentID == tab.id }
+
     /// A tab using the fake camera or mic stays awake too, as a capturing page does in Safari: hidden, its frames would
     /// slow to about one a second and its process would be suspended. Muted while nothing else needs it shown.
     func updateVisibility() {
@@ -31,7 +35,14 @@ extension Browser {
         shownTab = shown
         for tab in model.workspaces.lazy.flatMap(\.tabs) {
             let needed = needsVisible(tab), capturing = tab.liveCaptures > 0
-            setHidden(tab, !needed && !capturing)
+            let kept = keptRunning(tab)
+            setHidden(tab, !needed && !capturing && !kept)
+            // Hiding would have taken the keyboard from it (an agent's click into a field leaves it there), so the
+            // person's keys never go to a page they can't see.
+            if kept, !needed, !isDisplayed(tab), let responder = mainWindow.window.firstResponder as? NSView,
+               responder.isDescendant(of: tab.webView) {
+                mainWindow.window.makeFirstResponder(nil)
+            }
             updateMute(tab, quiet: !needed && !isDisplayed(tab))
         }
     }

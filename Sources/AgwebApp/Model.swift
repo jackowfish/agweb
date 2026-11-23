@@ -96,7 +96,8 @@ final class Workspace: Identifiable {
     @ObservationIgnored var recorder: Recorder?
     /// `agweb -w NAME adblock off`: this workspace loads everything until it turns it back on; kept across restarts.
     @ObservationIgnored var adBlockOff = false
-    /// `agweb -w NAME unload off`: its tabs keep their pages however long they sit unused; kept across restarts.
+    /// `agweb -w NAME unload off`: its tabs keep their pages however long they sit unused, and its current tab keeps
+    /// running unseen (Visibility.swift); kept across restarts.
     @ObservationIgnored var unloadOff = false
     /// `agweb -w NAME sound on`: its tabs are heard while hidden too (music behind other tabs or the dashboard); an
     /// agent's tabs are otherwise muted while hidden. Kept across restarts.

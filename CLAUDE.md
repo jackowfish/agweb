@@ -21,7 +21,7 @@ Agent actions never activate the app, raise or focus its window, or pop anything
   - `Browser.swift`: dispatches commands, one at a time per workspace, workspaces in parallel.
   - `BrowserState.swift`: requests, routes, cookies and storage state.
   - `Model.swift`: workspaces, tabs and named profiles (session cookies, locks).
-  - `Visibility.swift`: which tabs WebKit sees; turns off the secure input WebKit leaves on in the background.
+  - `Visibility.swift`: which tabs WebKit sees (`unload off` keeps a workspace's current tab running); turns off the secure input WebKit leaves on in the background.
   - `SavedWorkspaces.swift`: saves and reopens workspaces, tabs, their sessionStorage and when each was last used.
   - `Cleanup.swift`: closes workspaces and tabs unused for Settings' days (7 by default), at launch and hourly.
   - `Unload.swift`: ends the page process of a tab unused for Settings' minutes (30 by default; 5 when macOS reports memory pressure), keeping its URL, title and history; the next command or display reloads it (a POST's result by its address, without resending the form). Never the displayed tab, one playing sound one can hear, or a workspace with `unload off`. `sound on` keeps a workspace's hidden tabs unmuted, and the person's Mute/Unmute Tab overrides it (Visibility.swift). In a tab whose process was unloaded or crashed, a form resubmission (back or forward onto a POST's result) is cancelled unless it is an explicit reload.

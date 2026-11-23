@@ -477,7 +477,8 @@ final class Browser {
             }
             return AdBlock.shared.status(for: workspace)
         case "unload", "sound":
-            // Per workspace, kept across restarts: unload off keeps its pages loaded, sound on lets them be heard hidden.
+            // Per workspace, kept across restarts: unload off keeps its pages loaded and its current tab running, sound on
+            // lets them be heard hidden.
             let name = request.command
             guard let workspace = model.workspaces.first(where: { $0.name == request.workspace }) else {
                 throw Failure("no workspace '\(request.workspace)'; \(name) on|off applies to one open workspace: agweb -w NAME \(name) \(name == "unload" ? "off" : "on")")
@@ -492,7 +493,7 @@ final class Browser {
             case let other?: throw Failure("\(name) takes on or off, not \(other)")
             }
             return name == "unload"
-                ? (workspace.unloadOff ? "unload off: this workspace's tabs keep their pages however long they sit unused" : "unload on: a tab unused for a while is unloaded to free memory and reloads when used")
+                ? (workspace.unloadOff ? "unload off: this workspace's tabs keep their pages however long they sit unused, and its current tab keeps running unseen while the window is open" : "unload on: a tab unused for a while is unloaded to free memory and reloads when used")
                 : (workspace.soundOn ? "sound on: this workspace's tabs are heard even while hidden" : "sound off: this workspace's tabs are muted while hidden")
         case "profile" where (args.first ?? "list") == "list":
             let names = Profiles.names

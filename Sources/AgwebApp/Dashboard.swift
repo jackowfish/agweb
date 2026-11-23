@@ -16,9 +16,9 @@ extension Browser {
         dashboardObserver.map(NotificationCenter.default.removeObserver)
         dashboardObserver = nil
         // Before the dashboard hides the displayed tab, which then gets its own picture as it goes hidden; one an agent
-        // keeps awake, or one capturing, stays shown, so it is taken here.
+        // keeps awake or running, or one capturing, stays shown, so it is taken here.
         if open, windowSeen {
-            let hiding = model.displayedTab.flatMap { needsVisible($0) || $0.liveCaptures > 0 ? nil : $0.id }
+            let hiding = model.displayedTab.flatMap { needsVisible($0) || keptRunning($0) || $0.liveCaptures > 0 ? nil : $0.id }
             captureAwake(but: hiding)
         }
         mainWindow.showDashboard(open)
