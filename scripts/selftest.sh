@@ -608,6 +608,11 @@ fails "timed out" -w st2 wait '#nothing' --timeout=300
 fails "now: no visible element matches role=button\[name=\"Kopieren\"\]; visible buttons" -w st2 wait 'role=button[name="Kopieren"]' --timeout=300
 check "nothing visible matches text=\"Never here\"" -w st2 wait 'text="Never here"' --gone
 fails "invalid selector" -w st2 wait 'bad[[' --timeout=5000
+check '"agweb test"' -w st2 eval '(el) => el.textContent' 'role=heading[level=1]'
+fails "no visible element matches role=heading" -w st2 eval '(el) => 1' 'role=heading[name="agweb"][level=2]' --timeout=1000
+fails "role=heading\[level=2\]" -w st2 wait 'role=heading[level=x]' --timeout=1000
+fails "put statements in" -w st2 eval 'a = 1; a'
+fails "JSON Parse error: Unexpected identifier \"x\"$" -w st2 eval '() => JSON.parse("x")'
 fails '^Error: invalid selector "": the target is empty' -w st2 wait '' --timeout=5000
 fails 'invalid selector "  ": the target is empty' -w st2 fill '  ' hello
 fails 'invalid selector " >> nth=0": the target is empty' -w st2 click ' >> nth=0'

@@ -109,18 +109,28 @@ public enum PageScripts {
       }
       return found;
     };
+    // A heading's level, as the snapshot prints it.
+    const levelOf = (el) => /^H[1-6]$/.test(el.tagName) ? +el.tagName[1] : parseInt(el.getAttribute('aria-level'), 10) || 2;
     // Every visible element a role= or text= target matches.
     const matchesOf = (target) => {
       if (target.startsWith('role=')) {
-        // name*= is accepted too: the name is a substring either way.
-        const m = /^role=([\\w-]+)(?:\\[name\\*?=(?:"([^"]*)"|'([^']*)'|([^\\]]*))\\])?$/.exec(target);
-        if (!m) {
-          const e = new Error(`invalid selector ${target}: use role=button or role=button[name="Save"] (a case-insensitive substring)`);
+        // name*= is accepted too: the name is a substring either way. [level=N] as a snapshot prints it for headings.
+        const head = /^role=([\\w-]+)/.exec(target), filters = {};
+        let rest = head ? target.slice(head[0].length) : null;
+        while (rest) {
+          const f = /^\\[(name|level)\\*?=(?:"([^"]*)"|'([^']*)'|([^\\]]*))\\]/.exec(rest);
+          if (!f) { rest = null; break; }
+          filters[f[1]] = f[2] ?? f[3] ?? f[4];
+          rest = rest.slice(f[0].length);
+        }
+        if (rest === null || (filters.level !== undefined && !/^-?\\d+$/.test(filters.level))) {
+          const e = new Error(`invalid selector ${target}: use role=button, role=button[name="Save"] (a case-insensitive substring) or role=heading[level=2]`);
           e.name = 'SyntaxError';
           throw e;
         }
-        const role = m[1], name = (m[2] ?? m[3] ?? m[4])?.toLowerCase().replace(/…$/, ''); // a cut name copied from a snapshot
-        return [...all(document)].filter(el => roleOf(el) === role && visible(el) && (name === undefined || nameOf(el).toLowerCase().includes(name)));
+        const role = head[1], name = filters.name?.toLowerCase().replace(/…$/, ''); // a cut name copied from a snapshot
+        return [...all(document)].filter(el => roleOf(el) === role && visible(el) && (name === undefined || nameOf(el).toLowerCase().includes(name))
+          && (filters.level === undefined || levelOf(el) === +filters.level));
       }
       // Not clean(): its 120-character cut would hide the end of a long paragraph.
       const whole = (s) => (s || '').replace(/\\s+/g, ' ').trim();
@@ -133,7 +143,7 @@ public enum PageScripts {
       // The innermost elements holding the text, not every ancestor of them.
       return [...all(document)].filter(el => !['SCRIPT', 'STYLE', 'HEAD', 'TITLE'].includes(el.tagName) && has(el) && visible(el) && ![...el.children].some(has));
     };
-    const label = (el) => `${roleOf(el) || el.tagName.toLowerCase()} ${JSON.stringify(nameOf(el) || clean(el.innerText).slice(0, 40))} [ref=${refOf(el)}]`;
+    const label = (el) => `${roleOf(el) || el.tagName.toLowerCase()} ${JSON.stringify(nameOf(el) || clean(el.innerText).slice(0, 40))}${roleOf(el) === 'heading' ? ` [level=${levelOf(el)}]` : ''} [ref=${refOf(el)}]`;
     const list = (els) => els.slice(0, 5).map(label).join('; ') + (els.length > 5 ? `; and ${els.length - 5} more` : '');
     // A CSS miss on a URL attribute: CSS compares the attribute as the page wrote it (HN's form has action="comment"),
     // while eval's form.action is the resolved URL.

@@ -942,8 +942,14 @@ final class Browser {
             try await pressKey(tab, try arg(0, "key"), phases: [request.command == "keydown" ? .keyDown : .keyUp])
         case "eval":
             let mark = try await args.count > 1 ? tab.call(PageScripts.mark, ["target": args[1]]) : nil
-            let result = try await tab.call(PageScripts.evaluate(try arg(0, "code"), mark: mark), world: .page,
+            let result: String
+            do {
+                result = try await tab.call(PageScripts.evaluate(try arg(0, "code"), mark: mark), world: .page,
                                             frame: args.count > 1 ? tab.frameRefs[args[1]] : nil)
+            } catch let failure as Failure where failure.description.contains("SyntaxError: Unexpected") || failure.description.contains("Expected ')'") {
+                // The code goes in parentheses, so `a(); b()` fails with "Expected ')'", which says nothing about why.
+                throw Failure((failure.description.hasSuffix(".") ? String(failure.description.dropLast()) : failure.description) + "; eval takes one expression or function: put statements in \"() => { ...; return value }\"")
+            }
             // `location.href = …` returns before the page goes; the next command must see the new one, not the old.
             try? await Task.sleep(for: .milliseconds(50))
             if tab.webView.isLoading { await tab.settle() }
