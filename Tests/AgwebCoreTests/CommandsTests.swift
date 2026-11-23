@@ -1,7 +1,7 @@
 import Testing
 @testable import AgwebCore
 
-@Test(arguments: [("tabs", "tab-list"), ("switch-tab", "tab-select"), ("snapshto", "snapshot"), ("network", "requests"), ("sleep", "wait"), ("scroll-to", "scroll-into-view"), ("back-forward", "history"), ("profiles", "profile"), ("profil", "profile")])
+@Test(arguments: [("tabs", "tab-list"), ("switch-tab", "tab-select"), ("snapshto", "snapshot"), ("network", "requests"), ("sleep", "wait"), ("scroll-to", "scroll-into-view"), ("back-forward", "history"), ("profiles", "profile"), ("profil", "profile"), ("text", "markdown")])
 func unknownCommandsSuggestTheRealOne(guess: String, real: String) {
     #expect(Commands.unknown(guess).hasSuffix("did you mean \(real)?"))
 }
