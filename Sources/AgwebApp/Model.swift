@@ -821,18 +821,20 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         unsafeBitCast(webView.method(for: selector), to: Close.self)(webView, selector)
     }
 
-    func goto(_ url: URL) async throws {
+    /// `headers`: sent with this page load and its redirects, not its subresources; a load by address later (an
+    /// unloaded tab coming back, a relaunch) goes without them.
+    func goto(_ url: URL, headers: [String: String] = [:]) async throws {
         pendingURL = nil
         initialLoad = nil
         unloaded = false
         await endOfUnload()
         // A fragment-only change is a same-document navigation; WebKit sends no didFinish for it.
-        if let current = webView.url, Self.sameDocument(current, url) {
+        if headers.isEmpty, let current = webView.url, Self.sameDocument(current, url) {
             webView.load(URLRequest(url: url))
             try? await Task.sleep(for: .milliseconds(100))
             return
         }
-        guard try await load(url) else { return }
+        guard try await load(url, headers: headers) else { return }
         try await waitForLoad()
         // A page that sends itself on by script (an SPA's SSO check) starts that navigation just after loading;
         // wait for it, so the reply shows where the agent really is.
@@ -870,7 +872,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
     /// Every first load goes through here, so a profile's saved session cookies are back before any page asks.
     /// False when a later load replaced this one while the cookies were coming back.
     @discardableResult
-    func load(_ url: URL) async throws -> Bool {
+    func load(_ url: URL, headers: [String: String] = [:]) async throws -> Bool {
         if let refusal = Profiles.refusal(workspace.profile) { throw Failure(refusal) }
         requestedURL = url
         loadGeneration += 1
@@ -879,8 +881,14 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         guard generation == loadGeneration else { return false }
         expected = url.isFileURL
             ? webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-            : webView.load(URLRequest(url: url))
+            : webView.load(Self.request(url, headers))
         return true
+    }
+
+    private static func request(_ url: URL, _ headers: [String: String]) -> URLRequest {
+        var request = URLRequest(url: url)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        return request
     }
 
     /// "/login/" and "/login" are one page; an empty path is "/".

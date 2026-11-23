@@ -17,6 +17,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
                                 --basic-auth USER --secret-cmd CMD (or USER:PASSWORD), on open too: the login a 401
                                 asks for, for that URL's site, in memory until the workspace closes (with -p, an
                                 accepted one serves the profile's workspaces until agweb quits)
+                                --header "k: v" (repeats), on open too: sent with that page load and its redirects,
+                                other hosts too (an API page needing a header), not its images, scripts or fetches
   history                       the tab's back-forward list: where go-back (-1) and go-forward (+1) lead, current is 0
                                 (the 10 around the current one; --max-results=N for more)
   snapshot [target]             page (or one element) as a tree with [ref=eN] handles; iframes included
@@ -294,6 +296,7 @@ func secret(command: String?, file: String?) -> String {
 let settingProxy = command == "profile" && args.first == "set" && args.count == 4 && args[2] == "proxy" && args[3] != "off"
 let basicAuth = options["basic-auth"] != nil
 if basicAuth, !["open", "goto"].contains(command) || args.isEmpty { fail("--basic-auth works with open <url> and goto <url>") }
+if options["header"] != nil, command != "route", !["open", "goto"].contains(command) || args.isEmpty { fail("--header works with open <url>, goto <url> and route") }
 if options["secret-cmd"] != nil || options["secret-file"] != nil {
     let command = options.removeValue(forKey: "secret-cmd"), file = options.removeValue(forKey: "secret-file")
     guard positional.first == "fill" || settingProxy || basicAuth else {

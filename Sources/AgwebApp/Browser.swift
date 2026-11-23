@@ -561,7 +561,7 @@ final class Browser {
             if let text = args.first {
                 let url = try Address.url(text)
                 try storeBasicAuth(options, for: url, in: workspace)
-                try await tab.goto(url)
+                try await tab.goto(url, headers: try headers(options))
             } else {
                 try await tab.loadIfPending()
             }
@@ -668,10 +668,7 @@ final class Browser {
             }
             route.body = options["body"]
             route.contentType = options["content-type"]
-            for line in (options["header"] ?? "").split(separator: "\n") {
-                guard let colon = line.firstIndex(of: ":") else { throw Failure("--header is \"name: value\"") }
-                route.headers[line[..<colon].trimmingCharacters(in: .whitespaces)] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            }
+            route.headers = try headers(options)
             workspace.routes = workspace.routes.filter { $0.pattern != route.pattern } + [route]
             return "fetch and XHR calls matching \(route.pattern) get \(route.status ?? 200)\n" + routeList(workspace)
         case "route-list":
@@ -760,7 +757,7 @@ final class Browser {
         case "goto":
             let url = try Address.url(try arg(0, "url"))
             try storeBasicAuth(options, for: url, in: workspace)
-            try await tab.goto(url)
+            try await tab.goto(url, headers: try headers(options))
         case "reload":
             // Before the call: WebKit may ask about the navigation before reload() returns.
             tab.resubmitAllowed = true
@@ -1856,6 +1853,18 @@ final class Browser {
     /// in a cross-origin frame: snapshot, markdown and click can't reach it, a native click at its spot can.
     /// The checkbox appears by script after the load, so a reply right after goto may not have its spot yet.
     /// `--basic-auth` on open or goto: the login for the URL's origin, its password hidden in replies from now on.
+    /// Repeated --header "name: value" options, which the CLI joins with newlines.
+    private func headers(_ options: [String: String]) throws -> [String: String] {
+        var headers: [String: String] = [:]
+        for line in (options["header"] ?? "").split(separator: "\n") {
+            guard let colon = line.firstIndex(of: ":"), case let name = line[..<colon].trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+                throw Failure("--header is \"name: value\"")
+            }
+            headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return headers
+    }
+
     private func storeBasicAuth(_ options: [String: String], for url: URL, in workspace: Workspace) throws {
         guard let user = options["basic-auth"], let password = options["basic-auth-password"] else { return }
         guard let scheme = url.scheme, ["http", "https"].contains(scheme), let host = url.host else { throw Failure("--basic-auth needs an http or https URL") }
