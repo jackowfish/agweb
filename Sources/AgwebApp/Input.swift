@@ -83,16 +83,25 @@ enum NativeInput {
         }
     }
 
-    /// AppKit has no constructor for scroll events; a CGEvent converts, given the window and a screen location.
+    /// AppKit has no constructor for scroll events; a CGEvent converts. The NSEvent it makes has no window, so its
+    /// locationInWindow is the screen location, and WebKit, reading that as a window point, scrolled whatever sat a
+    /// window's origin away from the pointer (the page itself, never the editor or box under it). So the location
+    /// given is the window point, flipped as AppKit flips screen points; an event that does get the window gets the
+    /// real screen location.
     static func wheel(_ webView: WKWebView, at cssPoint: CGPoint, viewportHeight: CGFloat, dx: Int32, dy: Int32) throws {
-        guard let window = webView.window,
-              let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -dy, wheel2: -dx, wheel3: 0) else {
-            throw Failure("tab has no window to receive input")
+        guard let window = webView.window else { throw Failure("tab has no window to receive input") }
+        let inWindow = try mouse(.mouseMoved, webView, cssPoint, viewportHeight).locationInWindow
+        func event(at location: CGPoint) -> NSEvent? {
+            guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -dy, wheel2: -dx, wheel3: 0) else { return nil }
+            event.location = location
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+            return NSEvent(cgEvent: event)
         }
-        event.location = screenPoint(window, try mouse(.mouseMoved, webView, cssPoint, viewportHeight).locationInWindow)
-        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
-        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
-        guard let scroll = NSEvent(cgEvent: event) else { throw Failure("could not make a scroll event") }
+        guard var scroll = event(at: screenPoint(window, inWindow)) else { throw Failure("could not make a scroll event") }
+        if scroll.window !== window, let windowless = event(at: CGPoint(x: inWindow.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - inWindow.y)) {
+            scroll = windowless
+        }
         webView.scrollWheel(with: scroll)
     }
 

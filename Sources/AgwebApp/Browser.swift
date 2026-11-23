@@ -746,7 +746,7 @@ final class Browser {
         defer { tab.markSeen() }
         let instant = options["instant"] != nil
         if options["js"] == nil {
-            let targets = request.command == "drag" ? Array(args.prefix(2)) : Self.actsOnTarget.contains(request.command) ? Array(args.prefix(1)) : []
+            let targets = request.command == "drag" ? Array(args.prefix(2)) : request.command == "mousewheel" ? Array(args.dropFirst(2).prefix(1)) : Self.actsOnTarget.contains(request.command) ? Array(args.prefix(1)) : []
             for target in targets { try await awaitTarget(tab, target, request.command, options) }
             // Calls the page made while the action waited are not the action's.
             tab.commandStart = Date().timeIntervalSince1970 * 1000
@@ -840,8 +840,19 @@ final class Browser {
             try await drag(tab, from: try arg(0, "from"), to: try arg(1, "to"), instant: instant)
             await tab.settle()
         case "mousewheel":
-            guard let dx = Double(try arg(0, "dx")), let dy = Double(try arg(1, "dy")), dx.isFinite, dy.isFinite else {
-                throw Failure("use: agweb mousewheel <dx> <dy> in CSS pixels; positive dy scrolls down")
+            guard let dx = Double(try arg(0, "dx")), let dy = Double(try arg(1, "dy")), abs(dx) <= 1e6, abs(dy) <= 1e6 else {
+                throw Failure("use: agweb mousewheel <dx> <dy> [target] in CSS pixels up to 1000000; positive dy scrolls down")
+            }
+            // A target gets the pointer first, so the wheel scrolls it (an editor, a list) rather than what the pointer was over.
+            if args.count > 2 {
+                var spot = try await locate(tab, args[2], instant: instant)
+                if spot.size.width == 0 || spot.size.height == 0 { throw Failure("\(args[2]) has no size on screen; snapshot again") }
+                // One taller or wider than the viewport: the pointer goes to the part that shows.
+                let shown = CGRect(x: spot.center.x - spot.size.width / 2, y: spot.center.y - spot.size.height / 2, width: spot.size.width, height: spot.size.height)
+                    .intersection(CGRect(origin: .zero, size: spot.viewport))
+                if !shown.isNull, shown.width > 0, shown.height > 0 { spot.center = CGPoint(x: shown.midX, y: shown.midY); spot.size = shown.size }
+                let landed = try await glide(tab, onto: args[2], from: spot, instant: instant).spot
+                if let covered = landed.covered { tab.events.append("\(args[2]) is covered by \(covered), which the wheel scrolls instead") }
             }
             try await wheel(tab, dx: dx, dy: dy, instant: instant)
         case "hover":

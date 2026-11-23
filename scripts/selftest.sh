@@ -650,6 +650,11 @@ check 'true' -w drag eval "() => scrollY > 300"
 check "Page" -w drag mousewheel 0 -400 --instant
 check '^0$' -w drag eval 'scrollY'
 fails "positive dy" -w drag mousewheel 0 down
+# The wheel goes to what is under the pointer: a scroll box scrolls, the page doesn't.
+check "Page" -w drag mousewheel 0 200 '#box'
+check 'true' -w drag eval "() => box.scrollTop > 100 && (window.boxY ??= scrollY) === scrollY"
+check "Page" -w drag mousewheel 0 100 '#box' --instant
+check 'true' -w drag eval "() => box.scrollTop > 250 && scrollY === boxY"
 
 echo "== recording"
 fails "must end in .mp4" -w drag video-start "$dir"

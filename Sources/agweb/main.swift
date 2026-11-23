@@ -35,7 +35,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"], text=Save (substring) o
   hover <target>                glide the pointer onto an element, so :hover and mouseover fire
   mousemove <x> <y>             glide the pointer to a viewport point (CSS pixels); drags while a button is down
   mousedown | mouseup [button]  press or release a mouse button at the pointer
-  mousewheel <dx> <dy>          scroll at the pointer; positive dy scrolls down
+  mousewheel <dx> <dy> [target] scroll what is under the pointer, as a person's wheel does (an inner box or
+                                editor before the page); with a target, the pointer moves onto it first; positive dy down
   fill <target> <text>          text fields, <select> options, date/colour/number inputs (--submit: Enter after)
   fill <target> --secret-cmd CMD | --secret-file PATH
                                 a secret: the first line CMD prints (pass show site) or of the file, hidden in replies

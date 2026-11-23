@@ -185,7 +185,7 @@ agweb -w t scroll-into-view e40 # glide an element on screen for a screenshot or
 agweb -w t emulate --device=iphone # check the phone layout: 390x844 and an iPhone user agent, reloads; no touch or hover/pointer media
 ```
 
-`--instant` skips human pacing for pointer verbs and `type`. `type` types where the focus is; `fill <target> <text>` types into an element. The rest (cookies, `state-save`/`state-load`, `pdf`, `emulate`, `drag`, `mousewheel`) is in `agweb help [command]`.
+`--instant` skips human pacing for pointer verbs and `type`. `type` types where the focus is; `fill <target> <text>` types into an element. `mousewheel <dx> <dy> [target]` scrolls what is under the pointer (an editor or box). The rest (cookies, `state-save`/`state-load`, `pdf`, `emulate`, `drag`) is in `agweb help [command]`.
 
 ## Troubleshooting
 
