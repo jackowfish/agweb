@@ -857,9 +857,10 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
             guard webView.isLoading else { break }
             while webView.isLoading, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
         }
-        // An SSO bounce or a login redirect explains a page the agent didn't ask for.
+        // An SSO bounce or a login redirect explains a page the agent didn't ask for; the reply's URL already says where
+        // (an SSO landing's can be thousands of characters of tokens).
         if let landed = webView.url, landed.host != url.host || Self.trimmedPath(landed) != Self.trimmedPath(url) {
-            events.append("redirected to \(landed.absoluteString.prefix(200))")
+            events.append("redirected (URL shows where it landed)")
         }
         // The title arrives just after didFinish; agents read it from the reply.
         for _ in 0..<5 where (webView.title ?? "").isEmpty { try? await Task.sleep(for: .milliseconds(60)) }

@@ -675,6 +675,8 @@ final class Browser {
                 let address = try Address.url(url)
                 workspace.working(on: tab)
                 try await tab.goto(address)
+                // The list shows where it landed; left pending, the note would sit by the next command's URL.
+                tab.events.removeAll { $0.hasPrefix("redirected") }
             }
             return tabList(workspace)
         case "tab-select":

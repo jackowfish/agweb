@@ -766,8 +766,8 @@ check "index.html?next" -w tabs3 reload
 check "#frag" -w tabs3 goto "$u#frag"
 check "Page" -w tabs3 goto "http://127.0.0.1:$port/redirect.html"
 check "URL containing redirected" -w tabs3 wait --url=redirected
-check "redirected to http://127.0.0.1:$port/index.html?sso" -w tabs3 goto "http://127.0.0.1:$port/later.html"
-check "redirected to http://localhost:$port/index.html?bounced" -w tabs3 goto "http://127.0.0.1:$port/x?to=http://localhost:$port/index.html%3Fbounced"
+check "URL: http://127.0.0.1:$port/index.html?sso" -w tabs3 goto "http://127.0.0.1:$port/later.html"
+check "redirected (URL shows where it landed)" -w tabs3 goto "http://127.0.0.1:$port/x?to=http://localhost:$port/index.html%3Fbounced"
 check "Page" -w tabs3 eval "location.href = '/index.html?evalnav'"
 check '"?evalnav"' -w tabs3 eval 'location.search'
 fails "up to 600000" -w tabs3 wait '#b' --timeout=700000

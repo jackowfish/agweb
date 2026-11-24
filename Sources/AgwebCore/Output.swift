@@ -82,11 +82,16 @@ public enum Output {
         return body
     }
 
-    /// What a `--raw` reply leaves out of the answer, for stderr: the Events and the Page notes.
+    /// What a `--raw` reply leaves out of the answer, for stderr: the Events and the Page notes, and the URL after a
+    /// redirect (its note doesn't repeat it).
     public static func rawNotes(_ text: String) -> [String] {
-        sections(text).flatMap { section in
+        let all = sections(text)
+        let redirected = all.contains { $0.title == "Events" && $0.body.contains("- redirected") }
+        return all.flatMap { section in
             section.title == "Events" ? section.body.split(separator: "\n")
-                : section.title == "Page" ? section.body.split(separator: "\n").filter { $0.hasPrefix("- Note: ") || $0.hasPrefix("- Console: ") } : []
+                : section.title == "Page" ? section.body.split(separator: "\n").filter {
+                    $0.hasPrefix("- Note: ") || $0.hasPrefix("- Console: ") || (redirected && $0.hasPrefix("- URL: "))
+                } : []
         }.map { String($0.dropFirst(2)) }
     }
 

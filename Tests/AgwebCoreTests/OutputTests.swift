@@ -48,6 +48,8 @@ let evalReply = "### Result\n\"a\\nb\"\n### Page\n- URL: https://example.com/\n-
     #expect(Output.raw(reply) == "42")
     #expect(Output.rawNotes(reply) == ["Note: main content only", "Console: 2 new errors", "the tab moved since your last command"])
     #expect(Output.rawNotes("### Result\n1\n### Page\n- URL: x").isEmpty)
+    let landed = "### Page\n- URL: https://idp.test/cb#t\n### Events\n- redirected (URL shows where it landed)"
+    #expect(Output.rawNotes(landed) == ["URL: https://idp.test/cb#t", "redirected (URL shows where it landed)"])
 }
 
 @Test func textIsCutAtALineAndSaysSo() {
