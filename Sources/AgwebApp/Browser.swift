@@ -719,7 +719,7 @@ final class Browser {
             // Shows the agent's tab inside the window; never raises or activates the app.
             guard let tab = workspace.current else { throw Failure("workspace has no tabs") }
             model.display(tab.id)
-            mainWindow.showQuietly()
+            mainWindow.showQuietly(evenIfPutAway: true)
             return describe(tab)
         case "route":
             var route = Workspace.Route(pattern: try arg(0, "pattern"))
@@ -1292,7 +1292,7 @@ final class Browser {
 
     /// The shot, and a note when part of what was asked for doesn't show in it.
     private func screenshot(_ tab: Tab, target: String?, fullPage: Bool) async throws -> (image: NSImage, note: String?) {
-        if windowHidden { throw Failure(MainWindow.notRendering) }
+        if windowHidden { throw Failure(MainWindow.notRendering(mainWindow.window)) }
         let scale = tab.webView.pageZoom * tab.webView.magnification
         let cap = 16_384.0
         func numbers(_ json: String) throws -> [String: Double] {
@@ -1517,7 +1517,7 @@ final class Browser {
         let done = Flag()
         tab.asking = message
         model.display(tab.id)
-        mainWindow.showQuietly()
+        mainWindow.showQuietly(evenIfPutAway: true)
         mainWindow.showAsk(on: tab.webView, message: message) { done.on = true }
         defer {
             tab.asking = nil
@@ -1667,7 +1667,7 @@ final class Browser {
             try data.write(to: url)
             return
         }
-        guard let window = tab.webView.window else { throw Failure(MainWindow.notRendering) }
+        guard let window = tab.webView.window else { throw Failure(MainWindow.notRendering(mainWindow.window)) }
         let info = NSPrintInfo.shared.copy() as! NSPrintInfo
         if let paper {
             let sizes = ["a4": NSSize(width: 595, height: 842), "letter": NSSize(width: 612, height: 792), "legal": NSSize(width: 612, height: 1008)]
@@ -2103,7 +2103,10 @@ final class Browser {
     private func describe(_ tab: Tab, note: String? = nil) -> String {
         var out = "### Page\n- URL: \(tab.currentURL)\n- Title: \(tab.currentTitle)"
         if let note { out += "\n- Note: \(note)" }
-        if windowHidden { out += "\n- Note: the window is closed or minimized; pages are frozen between commands (agweb show)" }
+        if windowHidden {
+            out += "\n- Note: " + (MainWindow.putAway(mainWindow.window) ? "the person minimized or hid the window; pages are frozen (agweb show brings it back: only if they said to)"
+                : "the window is closed; pages are frozen between commands (agweb show)")
+        }
         // Only when the tabs changed since the agent last saw them: a popup opened, a tab closed, another is current.
         // A --raw reply drops the list, so it doesn't count as seen.
         let workspace = tab.workspace

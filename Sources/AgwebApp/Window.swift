@@ -82,14 +82,22 @@ final class MainWindow: NSObject, NSWindowDelegate {
     func windowDidMove(_ notification: Notification) { saveFrame() }
     func windowDidResize(_ notification: Notification) { saveFrame() }
 
-    /// Closed (ordered out) or minimized windows don't render, so snapshots and recordings get nothing.
+    /// Closed (ordered out), minimized or hidden windows don't render, so snapshots and recordings get nothing.
     static func isRendering(_ window: NSWindow) -> Bool { window.isVisible && !window.isMiniaturized }
-    static let notRendering = "the window is closed or minimized, so pages are not rendering; run: agweb show"
+    /// Why pages aren't rendering and what to do: a window the person minimized or hid is theirs to bring back.
+    static func notRendering(_ window: NSWindow) -> String {
+        putAway(window) ? "the person minimized or hid the window, so pages are not rendering; ask them to bring it back, or run agweb show only if they said to"
+            : "the window is closed, so pages are not rendering; run: agweb show"
+    }
 
-    /// Puts the window on screen behind everything else, so it appears in the window list without
-    /// covering or activating anything.
-    func showQuietly() {
-        if !window.isVisible { window.orderBack(nil) }
+    static func putAway(_ window: NSWindow) -> Bool { window.isMiniaturized || NSApp.isHidden }
+
+    /// Puts a closed window back on screen behind everything else, so it appears in the window list without covering
+    /// or activating anything. One the person minimized, or hid with the app, stays so: ordering it in brings it
+    /// back. Unless `evenIfPutAway`, for an agent asking for their view (show, ask).
+    func showQuietly(evenIfPutAway: Bool = false) {
+        guard !window.isVisible, evenIfPutAway || !Self.putAway(window) else { return }
+        window.orderBack(nil)
     }
 
     /// Each web view sits in an opaque host filling the content area, so a tab resized smaller doesn't show the

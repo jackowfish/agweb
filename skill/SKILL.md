@@ -23,7 +23,7 @@ agweb -w fix-login close # when done; otherwise the workspace reopens after a re
 - Pass `-w` on every call or `export AGWEB_WORKSPACE=fix-login`; in zsh a function `a() { agweb -w fix-login "$@"; }` works, a variable holding `agweb -w fix-login` doesn't.
 - `update`, `quit` and `close-all` hit every agent: only when the person asks.
 - `goto`, `go-back` and `reload` wait for the page; after `goto`, Events say `redirected` on a login or SSO bounce.
-- A tab left unused for 30 minutes (Settings) is unloaded to free memory; your next command reloads it, and Events say so: cookies, storage and history stay, but typed text, scroll position and the app's in-memory state are gone, so take a new snapshot. `agweb -w NAME unload off` keeps your workspace's pages loaded and its current tab running unseen (a page working on its own, like a game bot or a call; otherwise it slows 30 s after your last command and then freezes). A minimized or closed window still pauses it.
+- A tab left unused for 30 minutes (Settings) is unloaded to free memory; your next command reloads it, and Events say so: cookies, storage and history stay, but typed text, scroll position and the app's in-memory state are gone, so take a new snapshot. `agweb -w NAME unload off` keeps your workspace's pages loaded and its current tab running unseen (a page working on its own, like a game bot or a call; otherwise it slows 30 s after your last command and then freezes). A minimized, hidden or closed window still pauses it.
 - Your tabs are muted unless shown; `agweb -w NAME sound on` lets them be heard behind other tabs (music), and a tab playing aloud is never unloaded.
 - If Events say `the tab moved since your last command`, or `go-back` lands somewhere unexpected, `agweb history` shows the tab's entries (`-1` is where `go-back` goes).
 - Keep stderr: errors say why and exit 1. Never `2>/dev/null`; chain dependent steps with `&&`, not `;`.
@@ -180,7 +180,7 @@ agweb -w demo video-stop
 ```sh
 agweb list # who is here
 agweb dashboard --filename=grid.png # every tab at once, to check on parallel work; dashboard --hide
-agweb -w t show # put your tab in view for the person, without activating the window
+agweb -w t show # put your tab in view for the person, without activating the window (brings back a window they minimized or hid)
 agweb -w t scroll-into-view e40 # glide an element on screen for a screenshot or the person; actions scroll there by themselves
 agweb -w t emulate --device=iphone # check the phone layout: 390x844 and an iPhone user agent, reloads; no touch or hover/pointer media
 ```

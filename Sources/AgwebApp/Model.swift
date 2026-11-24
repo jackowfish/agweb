@@ -1001,7 +1001,7 @@ final class Tab: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate, WKD
         let process = webView.responds(to: selector) ? unsafeBitCast(webView.method(for: selector), to: Get.self)(webView, selector) : 1
         if process == 3 { return "suspended" }
         if process == 0 { return "not running" }
-        // A closed or minimized window hides every tab from WebKit.
+        // A closed, minimized or hidden window hides every tab from WebKit.
         let shown = webView.superview?.isHidden == false && webView.window.map(MainWindow.isRendering) == true
         return shown ? "visible" : "hidden"
     }

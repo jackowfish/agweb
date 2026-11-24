@@ -89,7 +89,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   state-load <file>             put them back; localStorage lands when its origin next loads
   dialog-accept [text] | dialog-dismiss   how confirm() and prompt() are answered (default dismiss)
   tab-list | tab-new [url] | tab-select <i> | tab-close [i]
-  show                          display this workspace's tab in the window (no activation)
+  show                          display this workspace's tab in the window (no activation; brings back a
+                                minimized or hidden window)
   ask <message> [target]        hand the tab to the person: a bar with Done over it, without taking focus; returns on
                                 Done, or when target/--text/--url appears (--timeout, default 600000 ms, up to 1 h)
   close                         close the workspace; a named profile keeps its logins
@@ -115,7 +116,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   unload [on|off]               off: this workspace's tabs are never unloaded (by default one unused 30 minutes,
                                 per Settings, frees its memory and reloads when used), and its current tab keeps
                                 running unseen while the window is open (by default 30 s after a command timers
-                                slow to 1/s, then it freezes; a minimized or closed window pauses every page)
+                                slow to 1/s, then it freezes; a minimized, hidden or closed window pauses every page)
   sound [on|off]                on: this workspace's tabs are heard even while hidden or behind the dashboard (by
                                 default muted unless shown); a playing tab one can hear is never unloaded
   install-cli [--check]         link /usr/local/bin/agweb to this app's CLI (also Help menu); --check says what is there

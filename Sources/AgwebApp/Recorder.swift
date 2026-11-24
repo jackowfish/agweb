@@ -35,7 +35,7 @@ final class Recorder {
     init(workspace: Workspace, url: URL, maxIdle: Double, frameSize: CGSize? = nil) throws {
         guard let tab = workspace.current else { throw Failure("nothing to record: the workspace has no tabs") }
         guard let rect = Self.viewport(of: tab.webView) else {
-            throw Failure(MainWindow.notRendering)
+            throw Failure(tab.webView.window.map(MainWindow.notRendering) ?? "the tab is not in the window")
         }
         guard url.pathExtension.lowercased() == "mp4" else { throw Failure("the video path must end in .mp4: \(url.path)") }
         var isDirectory: ObjCBool = false
@@ -96,7 +96,7 @@ final class Recorder {
         activity = nil
         guard frames > 0 else {
             writer.cancelWriting()
-            throw Failure("no frames were recorded; is the window closed? (agweb show)")
+            throw Failure("no frames were recorded; is the window closed, minimized or hidden?")
         }
         guard writer.status == .writing else { throw writer.error ?? Failure("recording to \(url.path) failed") }
         // The last frame stays until the stop, cut like any idle time, and for at least a second. MP4 ends at its

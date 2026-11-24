@@ -652,7 +652,7 @@ public enum PageScripts {
     const el = find(target);
     const r = rectOf(el);
     if (!r.width || !r.height) return 'no size';
-    // A frozen page (window closed or minimized) runs no observers; then the box in the top viewport decides.
+    // A frozen page (window closed, minimized or hidden) runs no observers; then the box in the top viewport decides.
     const shown = () => new Promise((resolve) => {
       const io = new IntersectionObserver(([entry]) => { io.disconnect(); resolve(entry.intersectionRatio); });
       io.observe(el);
