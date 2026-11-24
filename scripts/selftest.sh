@@ -260,6 +260,25 @@ check "$dir/page.md" -w out markdown --filename="$dir/page.md"
 check "no article here" -w out markdown
 check "^agweb: Note: no article here" -w out --raw markdown
 grep -q 'Press me' "$dir/page.md" || fail "markdown --filename did not write the page"
+# A chat keeps the document at the window's height (here plus the body's margin) and scrolls its messages inside; a long page whose root sets
+# overflow scrolls by itself, and its full page has no blank band.
+printf '<html><body style="height:100vh;display:flex;flex-direction:column"><div style="flex:1;overflow:auto"><div id="big" style="height:2500px">big</div><div style="height:1500px"></div></div></body></html>' > "$dir/chat.html"
+printf '<!doctype html><html style="overflow-y:scroll"><body style="margin:0"><div style="height:5000px">tall</div></body></html>' > "$dir/rootscroll.html"
+height() { sips -g pixelHeight "$1" | awk '/pixelHeight/ {print $2}'; }
+check "Page" -w out goto "http://127.0.0.1:$port/chat.html"
+dpr=$("$agweb" -w out --raw eval 'devicePixelRatio')
+check "Screenshot" -w out screenshot --full-page --filename="$dir/chat.png"
+[ "$(height "$dir/chat.png")" -ge $((4000 * dpr)) ] || fail "screenshot --full-page missed a chat's scrolled messages"
+check "Screenshot" -w out screenshot '#big' --filename="$dir/big.png"
+[ "$(height "$dir/big.png")" -eq $((2500 * dpr)) ] || fail "screenshot of an element taller than the viewport is not all of it"
+check "Page" -w out goto "http://127.0.0.1:$port/rootscroll.html"
+check "Screenshot" -w out screenshot --full-page --filename="$dir/root.png"
+[ "$(height "$dir/root.png")" -eq $((5000 * dpr)) ] || fail "screenshot --full-page of a page with root overflow is not its height"
+# An app shell with a max-height stops growing: the shot ends with it and says what stays hidden.
+printf '<!doctype html><body style="margin:0"><div style="height:100vh;max-height:1200px;display:flex;flex-direction:column"><div style="flex:1;overflow:auto"><div style="height:4000px">msgs</div></div><div style="height:100px">composer</div></div></body>' > "$dir/capped.html"
+check "Page" -w out goto "http://127.0.0.1:$port/capped.html"
+check "box that doesn't grow with the window" -w out screenshot --full-page --filename="$dir/capped.png"
+[ "$(height "$dir/capped.png")" -eq $((1200 * dpr)) ] || fail "screenshot --full-page of a capped app shell has a blank band"
 "$agweb" -w out close >/dev/null 2>&1
 }
 lanes="$lanes out"
@@ -758,6 +777,9 @@ check "Title: agweb test" -w tabs3 open "$u"
 check "Page" -w tabs3 eval "() => { addEventListener('keydown', e => window.lastKey = e.key + ':' + e.code) }"
 check "Page" -w tabs3 press F5
 check '"F5:F5"' -w tabs3 eval 'window.lastKey'
+# KeyboardEvent.code names, as games read them.
+check "Page" -w tabs3 press KeyW
+check '"w:KeyW"' -w tabs3 eval 'window.lastKey'
 check "index.html?next" -w tabs3 click 'a'
 check "URL containing next" -w tabs3 wait --url=next
 check "URL: $u\$" -w tabs3 go-back

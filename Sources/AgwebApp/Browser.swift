@@ -305,9 +305,18 @@ final class Browser {
         // 0.75 s instead of 0.37 s. Only while a command waits or runs; idle pages may still nap.
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "an agent's command")
         defer { ProcessInfo.processInfo.endActivity(activity) }
+        let turn = Turn(command: request.command)
+        let response = await enqueue(request, turn)
+        #if AGWEB_COMMAND_LOG
+        // execute logs what ran; one that gave up in the queue never got there.
+        if turn.gaveUp != nil { CommandLogFile.append(request, response, started: turn.arrived) }
+        #endif
+        return response
+    }
+
+    private func enqueue(_ request: Request, _ turn: Turn) async -> Response {
         let workspace = request.workspace
         let previous = queues[workspace]
-        let turn = Turn(command: request.command)
         waiting[workspace, default: []].append(turn)
         let work = Task { @MainActor () -> Response in
             _ = await previous?.value
@@ -354,6 +363,7 @@ final class Browser {
     /// A queued command's place: it runs when the one before ends, unless it gave up first (and why).
     private final class Turn {
         let command: String
+        let arrived = Date()
         var started = false
         var gaveUp: String?
         var deadline: Task<Void, Never>?
@@ -939,7 +949,10 @@ final class Browser {
             try await click(tab, target: target, button: .left, js: options["js"] != nil, forUpload: true, instant: instant)
             for _ in 0..<30 where !tab.chooserOpened { try await Task.sleep(for: .milliseconds(100)) }
             guard tab.chooserOpened else {
-                throw Failure("no file chooser opened; target the <input type=file> or the button that opens it")
+                // The click may have done something else (opened a dialog): the agent's snapshot is then stale.
+                let changed = await changes(tab, urlBefore: urlBefore)
+                throw Failure("no file chooser opened; the click on \(target) went through" + (changed.isEmpty ? "" : " and the page changed")
+                              + "; target the <input type=file> or the button that opens it" + changed)
             }
             await tab.settle()
         case "download":
@@ -1020,7 +1033,7 @@ final class Browser {
             _ = try await tab.call(PageScripts.highlight, ["target": args.first ?? "", "hide": options["hide"] != nil, "style": options["style"] ?? ""])
         case "screenshot":
             let path = try options["filename"] ?? { throw Failure("missing --filename") }()
-            let image = try await screenshot(tab, target: args.first, fullPage: options["full-page"] != nil)
+            let (image, shotNote) = try await screenshot(tab, target: args.first, fullPage: options["full-page"] != nil)
             let jpeg = ["jpg", "jpeg"].contains(URL(fileURLWithPath: path).pathExtension.lowercased())
             guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw Failure("could not encode screenshot") }
             // Tagged at the screen's density, as NSImage's TIFF was: at 72 dpi a Retina shot opens twice its size.
@@ -1030,7 +1043,7 @@ final class Browser {
             let data = try await Task.detached(priority: .userInitiated) { try Self.encode(cgImage, jpeg: jpeg, dpi: dpi) }.value
             try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: URL(fileURLWithPath: path))
-            var note: String?
+            var note = shotNote
             if args.isEmpty, options["full-page"] == nil,
                let below = Int(try await tab.call("return String(document.documentElement.scrollHeight - scrollY - innerHeight)", world: .page)), below > 0 {
                 note = "the page continues \(below) px below the viewport: --full-page for all of it, markdown eN to read a long element"
@@ -1277,40 +1290,123 @@ final class Browser {
         return data as Data
     }
 
-    private func screenshot(_ tab: Tab, target: String?, fullPage: Bool) async throws -> NSImage {
+    /// The shot, and a note when part of what was asked for doesn't show in it.
+    private func screenshot(_ tab: Tab, target: String?, fullPage: Bool) async throws -> (image: NSImage, note: String?) {
         if windowHidden { throw Failure(MainWindow.notRendering) }
         let scale = tab.webView.pageZoom * tab.webView.magnification
-        if let target {
-            if tab.frameRefs[target] != nil { _ = try await reveal(tab, target, instant: true) }
-            let json = try await tab.call(PageScripts.box, ["target": target])
-            let box = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
-            let origin = try await origin(tab, of: tab.frameRefs[target])
-            let viewport = try await viewportSize(tab)
-            let rect = CGRect(x: (box["x"] ?? 0) + origin.x, y: (box["y"] ?? 0) + origin.y, width: box["width"] ?? 0, height: box["height"] ?? 0)
-                .intersection(CGRect(origin: .zero, size: viewport))
-            guard !rect.isEmpty else { throw Failure("\(target) has no visible area") }
+        let cap = 16_384.0
+        func numbers(_ json: String) throws -> [String: Double] {
+            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double] ?? [:]
+        }
+        // takeSnapshot renders only the view's bounds, so a shot taller than the viewport grows the view; shotStart keeps
+        // the scroll positions the reflow moves, and they come back with the view's size.
+        let previous = tab.viewportSize
+        var grown = false
+        func grow(_ size: CGSize) async throws {
+            grown = true
+            mainWindow.setSize(tab.webView, CGSize(width: size.width * scale, height: size.height * scale), centered: tab.phone != nil)
+            _ = try await tab.call("await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return 'ok'")
+        }
+        func shot(_ rect: CGRect) async throws -> NSImage {
             let config = WKSnapshotConfiguration()
             // Snapshot rects are in view points from the top of the page, below the toolbar band.
             config.rect = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
             return try await tab.snapshot(config)
         }
-        let viewport = try await viewportSize(tab)
-        guard fullPage else {
+        func take() async throws -> (image: NSImage, note: String?) {
+            if let target {
+                if tab.frameRefs[target] != nil { _ = try await reveal(tab, target, instant: true) }
+                var box = try numbers(try await tab.call(PageScripts.box, ["target": target]))
+                let origin = try await origin(tab, of: tab.frameRefs[target])
+                var view = try await viewportSize(tab)
+                var note: String?
+                // Taller than the viewport: the view grows to fit it, and it goes to the top (in a chat, out from under the
+                // composer, which stays at the bottom).
+                if tab.frameRefs[target] == nil, let height = box["height"], height > view.height + 1 {
+                    _ = try await tab.call(PageScripts.shotStart)
+                    view.height = min(cap, view.height + height)
+                    try await grow(view)
+                    box = try numbers(try await tab.call(PageScripts.shotElement, ["target": target]))
+                    // Its height now: it may have reflowed with the view.
+                    if let shown = box["shown"], let height = box["height"], shown < height - 1 {
+                        // Only the part that shows: the rest of the box would picture whatever lies past the cut.
+                        box["y"] = box["shownY"]
+                        box["height"] = shown
+                        note = "\(target) is \(Int(height)) px tall and \(Int(shown)) px of it show"
+                            + (view.height >= cap ? " (a screenshot stops at 16384 px)" : " (a scrolling box around it keeps its height)")
+                            + ": markdown \(target) reads all of it"
+                    }
+                }
+                let rect = CGRect(x: (box["x"] ?? 0) + origin.x, y: (box["y"] ?? 0) + origin.y, width: box["width"] ?? 0, height: box["height"] ?? 0)
+                    .intersection(CGRect(origin: .zero, size: view))
+                guard !rect.isEmpty else { throw Failure("\(target) has no visible area") }
+                return (try await shot(rect), note)
+            }
+            let view = try await viewportSize(tab)
             // The view's bounds include the toolbar band; the page is the viewport.
-            let config = WKSnapshotConfiguration()
-            config.rect = CGRect(x: 0, y: 0, width: viewport.width * scale, height: viewport.height * scale)
-            return try await tab.snapshot(config)
+            guard fullPage else { return (try await shot(CGRect(origin: .zero, size: view)), nil) }
+            // The page's own height, plus what its scroller hides: a message list sized to the window grows with it.
+            let first = try numbers(try await tab.call(PageScripts.shotStart))
+            let page = first["page"] ?? view.height, hidden = first["hidden"] ?? 0
+            var height = min(cap, page + hidden)
+            try await grow(CGSize(width: view.width, height: height))
+            var left = 0.0
+            if hidden > 1 {
+                var now = try numbers(try await tab.call(PageScripts.shotMeasure))
+                if now["gone"] != nil {
+                    left = 0
+                } else if (now["scrollerHeight"] ?? 0) < (first["scrollerHeight"] ?? 0) + 1 {
+                    // A scroller of fixed height: the page's own height, without an empty band below.
+                    height = min(cap, page)
+                    try await grow(CGSize(width: view.width, height: height))
+                    left = hidden
+                } else {
+                    // A list sharing the window's height with other parts grows by less than the view: by that share.
+                    var before = (view: view.height, scroller: first["scrollerHeight"] ?? 0)
+                    for _ in 0..<3 {
+                        guard let more = now["hidden"], more > 1, height < cap, let scroller = now["scrollerHeight"] else { break }
+                        let share = (scroller - before.scroller) / max(1, height - before.view)
+                        guard share > 0.05 else { break }
+                        before = (height, scroller)
+                        height = min(cap, (height + more / share).rounded(.up))
+                        try await grow(CGSize(width: view.width, height: height))
+                        now = try numbers(try await tab.call(PageScripts.shotMeasure))
+                    }
+                    left = max(0, now["hidden"] ?? 0)
+                    // Still hiding some: it stopped growing (a max-height). Back to the least view that gives it that
+                    // height if it took all the growth, not a blank band below it.
+                    if left > 1, let size = now["scrollerHeight"] {
+                        let fit = max(page, view.height + size - (first["scrollerHeight"] ?? 0)).rounded(.up)
+                        if fit < height {
+                            height = fit
+                            try await grow(CGSize(width: view.width, height: height))
+                            left = max(0, try numbers(try await tab.call(PageScripts.shotMeasure))["hidden"] ?? left)
+                        }
+                    }
+                }
+                // A document sized by its content ends above a view grown by a list's share: the shot ends with it.
+                if let occupied = try numbers(try await tab.call(PageScripts.shotMeasure))["doc"], occupied < height {
+                    height = max(page, occupied.rounded(.up))
+                }
+            }
+            let cut = max(0, page - height) + (left > 1 ? left : 0)
+            let note = left > 1 && height < cap ? "the page scrolls inside a box that doesn't grow with the window, and \(Int(left)) px of it don't show: markdown reads them"
+                : height >= cap && cut > 1 ? "a screenshot stops at 16384 px: \(Int(cut)) px more of the page don't show" : nil
+            return (try await shot(CGRect(x: 0, y: 0, width: view.width, height: height)), note)
         }
-        // takeSnapshot renders only the view's bounds, so the view grows to the page's height for the shot.
-        let height = try await tab.call("return String(Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0))", world: .page)
-        let full = CGSize(width: viewport.width, height: min(Double(height) ?? viewport.height, 16_384))
-        let previous = tab.viewportSize
-        defer { mainWindow.setSize(tab.webView, previous, centered: tab.phone != nil) }
-        mainWindow.setSize(tab.webView, CGSize(width: full.width * scale, height: full.height * scale), centered: tab.phone != nil)
-        _ = try await tab.call("await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return 'ok'")
-        let config = WKSnapshotConfiguration()
-        config.rect = CGRect(x: 0, y: 0, width: full.width * scale, height: full.height * scale)
-        return try await tab.snapshot(config)
+        func restore() async {
+            guard grown else { return }
+            mainWindow.setSize(tab.webView, previous, centered: tab.phone != nil)
+            _ = try? await tab.call(PageScripts.shotEnd)
+        }
+        do {
+            let result = try await take()
+            await restore()
+            return result
+        } catch {
+            await restore()
+            throw error
+        }
     }
 
     /// `wait 1500` sleeps; otherwise polls until the target shows (or with --gone, leaves), the text or URL appears,
@@ -2065,7 +2161,7 @@ final class Browser {
     private static let mayRunPageCode: Set = ["eval", "keydown", "keyup", "mousedown", "mouseup", "upload", "download"]
 
     /// Actions whose reply says what they changed.
-    private static let reportsChanges: Set = ["click", "dblclick", "check", "uncheck", "hover", "fill", "select", "type", "press", "drag"]
+    private static let reportsChanges: Set = ["click", "dblclick", "check", "uncheck", "hover", "fill", "select", "type", "press", "drag", "upload"]
 
     /// The fetch/XHR calls an action started, and how the page tree differs from the one the agent last saw, so it
     /// rarely needs a snapshot after acting. The tree is compared only once the agent has taken a snapshot of this

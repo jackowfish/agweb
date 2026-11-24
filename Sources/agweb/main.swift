@@ -43,7 +43,7 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   select <target> <value>       choose a <select> option by value or label
   type <text>                   insert text at the focused element a character at a time, at a person's pace
                                 (input events, not key events; --submit: Enter after)
-  press <key>                   native key press: Enter, Tab, Escape, ArrowDown, Shift+Tab, Meta+a
+  press <key>                   native key press: Enter, Tab, Escape, ArrowDown, Shift+Tab, Meta+a, KeyW
                                 (Meta+c, Meta+x and Meta+v use the workspace clipboard, never the person's)
   keydown | keyup <key>         hold or release a key
   upload <target> <file...>     click a file input and answer its chooser with the files
@@ -54,8 +54,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   scroll-into-view <target>     glide an element to the middle of the viewport unless it is in view already
                                 (--instant jumps; clicks, hovers and drags scroll the same way)
   highlight [target]            outline an element on the page (--style=css; --hide removes one, or all)
-  screenshot [target]           PNG of the viewport or an element (--full-page; --filename, default
-                                .agweb/page-<time>.png; .jpg/.jpeg saves JPEG)
+  screenshot [target]           PNG of the viewport or a whole element (--full-page, a scrolling message list
+                                included; --filename, default .agweb/page-<time>.png; .jpg/.jpeg saves JPEG)
   pdf [path]                    the page as a PDF, paginated with print styles (--format=A4|Letter|Legal), or
                                 --single-page: the screen view on one page (default .agweb/page-<time>.pdf)
   resize <w> <h>                set this tab's viewport size in CSS pixels; the shared window stays as it is

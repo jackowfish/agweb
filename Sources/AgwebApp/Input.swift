@@ -225,7 +225,7 @@ enum NativeInput {
         var parts = combo.components(separatedBy: "+")
         // "+" itself, or a combo ending in "+", leaves an empty last part.
         if combo.hasSuffix("+") { parts.removeLast(2); parts.append("+") }
-        guard let keyName = parts.popLast(), !keyName.isEmpty else { throw Failure("empty key") }
+        guard var keyName = parts.popLast(), !keyName.isEmpty else { throw Failure("empty key") }
         var modifiers: NSEvent.ModifierFlags = []
         for part in parts {
             switch part.lowercased() {
@@ -237,6 +237,8 @@ enum NativeInput {
             }
         }
         if let (code, characters) = named[keyName.lowercased()] { return (code, characters, characters, modifiers) }
+        // KeyboardEvent.code names, as games read them: KeyW is w, Digit1 is 1.
+        if let match = keyName.wholeMatch(of: #/Key([A-Za-z])|Digit([0-9])/#.ignoresCase()) { keyName = String(match.1 ?? match.2!).lowercased() }
         guard keyName.count == 1, let char = keyName.first else { throw Failure("unknown key \(keyName)") }
         guard let key = keys[char] else { return (0, keyName, keyName, modifiers) }
         if key.base != char { modifiers.insert(.shift) }

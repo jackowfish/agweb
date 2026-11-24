@@ -579,6 +579,71 @@ public enum PageScripts {
     return JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height, viewportWidth: innerWidth, viewportHeight: innerHeight });
     """
 
+    /// The page's own scrolling: the root, and a body whose overflow goes to the viewport.
+    static let pageScrolls = """
+    const pageScrolls = (el) => {
+      const doc = el.ownerDocument;
+      return el === doc.documentElement || el === doc.scrollingElement
+        || (el === doc.body && doc.defaultView.getComputedStyle(doc.documentElement).overflowY === 'visible');
+    };
+    """
+
+    /// Before a screenshot taller than the viewport, which grows the view (moving scroll positions): keeps every scroll
+    /// position for `shotEnd`, goes to the top, and measures the page and its scroller: the biggest element scrolling
+    /// on its own, wide like a page's main part (chat apps keep the document at the window's height and scroll the
+    /// messages inside; a sidebar is narrow), and hiding more than the document does (on a page that scrolls by
+    /// itself, a box inside is part of it).
+    public static let shotStart = pageScrolls + """
+    const page = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0);
+    const scrolled = [[document.scrollingElement || document.documentElement, scrollX, scrollY]];
+    let scroller = null, area = 0;
+    for (const el of document.querySelectorAll('*')) {
+      if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) continue;
+      scrolled.push([el, el.scrollLeft, el.scrollTop]);
+      if (pageScrolls(el) || el.scrollHeight - el.clientHeight <= page - innerHeight + 1) continue;
+      if (el.clientHeight < innerHeight / 3 || el.clientWidth < innerWidth * 0.4) continue;
+      if (!['auto', 'scroll', 'overlay'].includes(getComputedStyle(el).overflowY)) continue;
+      if (el.clientWidth * el.clientHeight > area) { area = el.clientWidth * el.clientHeight; scroller = el; }
+    }
+    globalThis.agwebShot = { scrolled, scroller };
+    scrollTo({ left: 0, top: 0, behavior: 'instant' });
+    return JSON.stringify({ page, hidden: scroller ? scroller.scrollHeight - scroller.clientHeight : 0, scrollerHeight: scroller?.clientHeight ?? 0 });
+    """
+
+    /// After the view grew: how much of the scroller `shotStart` found is still hidden, and the height the document's
+    /// box takes (scrollHeight never says less than the view).
+    public static let shotMeasure = """
+    const s = globalThis.agwebShot?.scroller, doc = document.documentElement.getBoundingClientRect().bottom + scrollY;
+    // Re-rendered on resize: what it hides now is unknown.
+    if (!s?.isConnected) return JSON.stringify({ gone: 1, doc });
+    return JSON.stringify({ hidden: s.scrollHeight - s.clientHeight, scrollerHeight: s.clientHeight, doc });
+    """
+
+    /// After the view grew to fit a tall element: puts it at the top, and says which part of it shows (a scrolling box
+    /// of fixed height around it still cuts it).
+    public static let shotElement = find + pageScrolls + """
+    const el = find(target);
+    el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const r = rectOf(el), view = el.ownerDocument.defaultView;
+    let top = Math.max(r.local.top, 0), bottom = Math.min(r.local.bottom, view.innerHeight);
+    for (let a = el.parentElement ?? el.getRootNode().host; a; a = a.parentElement ?? a.getRootNode().host) {
+      if (pageScrolls(a) || view.getComputedStyle(a).overflowY === 'visible') continue;
+      const b = a.getBoundingClientRect();
+      top = Math.max(top, b.top + a.clientTop);
+      bottom = Math.min(bottom, b.top + a.clientTop + a.clientHeight);
+    }
+    return JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height, shown: Math.max(0, bottom - top), shownY: top + r.y - r.local.top });
+    """
+
+    /// After a tall screenshot: the view is back, so the scroll positions `shotStart` kept go back too.
+    public static let shotEnd = """
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    for (const [el, left, top] of globalThis.agwebShot?.scrolled ?? []) el.scrollTo({ left, top, behavior: 'instant' });
+    delete globalThis.agwebShot;
+    return 'ok';
+    """
+
     /// Brings the element to the middle of the viewport unless all of it shows already, as Playwright's
     /// scrollIntoViewIfNeeded does, gliding there over a few hundred milliseconds when `smooth`. How much shows is
     /// the browser's own answer (an IntersectionObserver), so scroll containers and iframes clip it too. One bigger
