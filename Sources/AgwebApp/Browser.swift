@@ -13,6 +13,10 @@ final class Browser {
     /// since a profile's pages are shared.
     private var secrets: Set<String> = []
     private var queues: [String: Task<Response, Never>] = [:]
+    /// Each workspace's running command and when it started, for a queued one that gives up.
+    private var running: [String: (command: String, since: Date)] = [:]
+    /// Each workspace's queued commands, in order, until their turn.
+    private var waiting: [String: [Turn]] = [:]
     /// Unload.swift: the memory pressure source it listens to, and until when its last warning holds.
     var memoryPressure: DispatchSourceMemoryPressure?
     var pressureUntil = Date.distantPast
@@ -301,15 +305,59 @@ final class Browser {
         // 0.75 s instead of 0.37 s. Only while a command waits or runs; idle pages may still nap.
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "an agent's command")
         defer { ProcessInfo.processInfo.endActivity(activity) }
-        let previous = queues[request.workspace]
+        let workspace = request.workspace
+        let previous = queues[workspace]
+        let turn = Turn(command: request.command)
+        waiting[workspace, default: []].append(turn)
         let work = Task { @MainActor () -> Response in
             _ = await previous?.value
+            self.waiting[workspace]?.removeAll { $0 === turn }
+            if let reason = turn.gaveUp { return Response(ok: false, output: reason) }
+            turn.started = true
+            self.running[workspace] = (request.command, Date())
+            defer { self.running[workspace] = nil }
             // The compiled rules from last time, found in milliseconds: the first page after a launch is filtered too.
             await AdBlock.shared.loading?.value
             return await self.execute(request)
         }
-        queues[request.workspace] = work
-        return await work.value
+        queues[workspace] = work
+        // Queued behind a long command (a background `wait`), it would outlast the CLI, which then knows only that no
+        // answer came: it gives up 10 s before, without running, and says what holds the workspace (`runLate` ones say
+        // they will still run).
+        guard let timeout = request.timeout, running[workspace] != nil || (waiting[workspace]?.count ?? 0) > 1 else { return await work.value }
+        let deadline = Task { _ = try? await Task.sleep(for: .seconds(max(1, timeout - 10))) }
+        turn.deadline = deadline
+        Task { _ = await work.value; deadline.cancel() }
+        _ = await deadline.value
+        // All on the main actor: nothing starts between these checks and giving up. With nothing running, its turn has
+        // come.
+        if let reason = turn.gaveUp { return Response(ok: false, output: reason) }
+        if turn.started || running[workspace] == nil { return await work.value }
+        let what = running[workspace].map { "its \($0.command) has run \(Int(Date().timeIntervalSince($0.since))) s" } ?? ""
+        if Self.runLate.contains(request.command) {
+            return Response(ok: true, output: "workspace \(workspace) is busy (\(what)), so \(request.command) waits its turn and runs when that ends")
+        }
+        turn.gaveUp = "Error: workspace \(workspace) is busy (\(what)), so \(request.command) did not run: a workspace runs one command at a time, in order; run it after that one ends"
+        // The ones queued behind it would run on a page it never prepared.
+        for later in (waiting[workspace] ?? []).drop(while: { $0 !== turn }).dropFirst()
+        where later.gaveUp == nil && !Self.runLate.contains(later.command) {
+            later.gaveUp = "Error: workspace \(workspace) is busy, and \(request.command) queued before \(later.command) did not run, so neither did it"
+            later.deadline?.cancel()
+        }
+        return Response(ok: false, output: turn.gaveUp!)
+    }
+
+    /// Run late rather than give up, answering that they will: they end things (a workspace, a recording, the app) or don't use the workspace.
+    static let runLate: Set = ["close", "close-all", "video-stop", "quit", "update", "list", "dashboard", "install-skill",
+                               "install-cli", "adblock", "unload", "sound", "profile"]
+
+    /// A queued command's place: it runs when the one before ends, unless it gave up first (and why).
+    private final class Turn {
+        let command: String
+        var started = false
+        var gaveUp: String?
+        var deadline: Task<Void, Never>?
+        init(command: String) { self.command = command }
     }
 
     private func execute(_ request: Request) async -> Response {

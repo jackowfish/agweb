@@ -6,12 +6,15 @@ public struct Request: Codable, Sendable {
     public var command: String
     public var args: [String]
     public var options: [String: String]
+    /// Seconds the CLI waits for the answer: a command queued behind a long one gives up in time to say why.
+    public var timeout: Int?
 
-    public init(workspace: String, command: String, args: [String], options: [String: String]) {
+    public init(workspace: String, command: String, args: [String], options: [String: String], timeout: Int? = nil) {
         self.workspace = workspace
         self.command = command
         self.args = args
         self.options = options
+        self.timeout = timeout
     }
 }
 

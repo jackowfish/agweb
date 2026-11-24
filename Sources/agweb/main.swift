@@ -475,7 +475,7 @@ if !isServing(socket) {
 // wait, and actions waiting for their target, may take up to --timeout before they answer.
 let waitSeconds = max(Int(options["timeout"] ?? "") ?? (command == "wait" ? 30_000 : command == "ask" ? 600_000 : 0), command == "wait" ? Int(args.first ?? "") ?? 0 : 0) / 1000 + 30
 let timeout = max(command == "download" ? 200 : 120, waitSeconds) + (command == "type" && options["instant"] == nil ? args.joined().count : 0)
-guard let response = sendRequest(Request(workspace: workspace, command: command, args: args, options: options), path: socket, timeout: timeout) else {
+guard let response = sendRequest(Request(workspace: workspace, command: command, args: args, options: options, timeout: timeout), path: socket, timeout: timeout) else {
     fail("no response from agweb on \(socket)")
 }
 guard response.ok, let path = writeAnswerTo else {
