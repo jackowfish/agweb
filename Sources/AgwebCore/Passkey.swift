@@ -27,7 +27,34 @@ public enum WebAuthn {
     }
 
     public static func attestationObject(authenticatorData: [UInt8]) -> [UInt8] {
-        CBOR.map([(CBOR.text("fmt"), CBOR.text("none")), (CBOR.text("attStmt"), CBOR.map([])), (CBOR.text("authData"), CBOR.bytes(authenticatorData))])
+        attestationObject(format: "none", statement: CBOR.map([]), authenticatorData: authenticatorData)
+    }
+
+    /// `statement`: the attStmt map, already CBOR, as a security key gave it.
+    public static func attestationObject(format: String, statement: [UInt8], authenticatorData: [UInt8]) -> [UInt8] {
+        CBOR.map([(CBOR.text("fmt"), CBOR.text(format)), (CBOR.text("attStmt"), statement), (CBOR.text("authData"), CBOR.bytes(authenticatorData))])
+    }
+
+    public static let eddsa = -8
+
+    /// What getPublicKey() returns: SubjectPublicKeyInfo DER, from a security key's raw key (ES256: x then y; EdDSA:
+    /// the 32 bytes). Nil for any other algorithm, as the spec allows.
+    public static func publicKeyInfo(algorithm: Int, raw: [UInt8]) -> [UInt8]? {
+        switch (algorithm, raw.count) {
+        case (es256, 64): return (try? P256.Signing.PublicKey(rawRepresentation: raw)).map { [UInt8]($0.derRepresentation) }
+        case (eddsa, 32): return [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00] + raw
+        default: return nil
+        }
+    }
+
+    /// The FIDO AppID extension's id: https, on the page's own registrable domain. Google's sign-in also names the
+    /// gstatic facet list, which Chrome allows for google.com.
+    public static func appIDAllowed(_ appID: String, host: String, suffixes: PublicSuffixes) -> Bool {
+        guard let url = URL(string: appID), url.scheme == "https", let appHost = url.host?.lowercased() else { return false }
+        let host = host.lowercased()
+        if appID == "https://www.gstatic.com/securitykey/origins.json" { return host == "google.com" || host.hasSuffix(".google.com") }
+        guard let site = suffixes.registrableDomain(of: host) else { return false }
+        return suffixes.registrableDomain(of: appHost) == site
     }
 
     /// In the key order the spec serializes, which some servers compare byte for byte.
@@ -75,6 +102,40 @@ public enum WebAuthn {
     }
 }
 
+/// libfido2's error codes (fido/err.h) as WebAuthn reports them to the page: a DOMException name and a reason.
+public enum SecurityKeyError {
+    public static let pinInvalid = 0x31, pinRequired = 0x36, noCredentials = 0x2e
+
+    public static func name(_ code: Int) -> String {
+        switch code {
+        case 0x19: "InvalidStateError" // credential excluded
+        case 0x16, 0x26, 0x2b: "NotSupportedError" // extension, algorithm, option
+        case 0x28: "ConstraintError" // key store full
+        default: "NotAllowedError"
+        }
+    }
+
+    public static func reason(_ code: Int) -> String {
+        switch code {
+        case 0x19: "the security key already holds a passkey for this account"
+        case 0x26: "the security key doesn't support the algorithms the site asked for"
+        case 0x16, 0x2b: "the security key doesn't support what the site asked for"
+        case 0x28: "the security key is full; delete a passkey on it (ykman fido credentials delete)"
+        case 0x2d: "the person cancelled"
+        case 0x05, 0x2f, 0x3a, -2: "nobody touched the security key in time"
+        case 0x27: "the security key refused"
+        case 0x2e: "the security key has no passkey for this site"
+        case 0x31: "wrong PIN"
+        case 0x32: "the security key's PIN is blocked; only resetting the key unblocks it"
+        case 0x34: "too many wrong PINs; unplug the security key and plug it in again"
+        case 0x35: "the site needs user verification and the security key has no PIN; set one (ykman fido access change-pin)"
+        case 0x36: "the security key needs its PIN"
+        case 0x3c: "the security key's built-in verification is blocked; use its PIN"
+        default: "the security key failed (libfido2 error \(code))"
+        }
+    }
+}
+
 /// The public suffix list (publicsuffix.org), ICANN and private sections alike. Hosts arrive as ASCII, so the list's
 /// Unicode rules are turned into punycode (`公司.cn` into `xn--55qx5d.cn`) to match them.
 public struct PublicSuffixes: Sendable {
@@ -103,6 +164,14 @@ public struct PublicSuffixes: Sendable {
             if rules.contains(tails[i]) || (i + 1 < tails.count && wildcards.contains(tails[i + 1])) { return tails[i] }
         }
         return tails[tails.count - 1]
+    }
+
+    /// The public suffix and one label more; nil for a public suffix itself.
+    public func registrableDomain(of domain: String) -> String? {
+        let domain = domain.lowercased()
+        guard !isPublicSuffix(domain) else { return nil }
+        let suffix = publicSuffix(of: domain)
+        return domain.dropLast(suffix.count + 1).split(separator: ".").last.map { "\($0).\(suffix)" }
     }
 
     public func isPublicSuffix(_ domain: String) -> Bool {
