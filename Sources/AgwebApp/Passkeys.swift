@@ -166,6 +166,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
     /// The person sees each step as a sheet; a wrong PIN asks again.
     private func withKey<T: Sendable>(_ tab: Tab, rpID: String, doing: String, userVerification: String, timeout: TimeInterval, noKey: String,
                                       _ body: @escaping @Sendable (SecurityKey, [CChar]?, _ builtInUV: Bool) throws -> T) async throws -> T {
+        guard SecurityKey.available else { throw Refusal("NotAllowedError", SecurityKey.missing) }
         guard keyInUse == nil else { throw Refusal("NotAllowedError", "the security key is busy with another request") }
         guard let window = browser?.mainWindow.window, window.isVisible, !window.isMiniaturized else {
             throw Refusal("NotAllowedError", "the security key needs the person, and Agweb's window is closed or minimized")

@@ -32,6 +32,10 @@ final class SecurityKey: @unchecked Sendable {
 
     private static let initialized: Void = fido_init(0)
 
+    /// libfido2 is linked weak: without it installed, its functions are missing and no call may run.
+    static let available = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "fido_dev_new") != nil // RTLD_DEFAULT
+    static let missing = "security keys need libfido2, which isn't installed: brew install libfido2, then restart Agweb"
+
     /// Nil when no key is plugged in.
     static func first(timeout: TimeInterval) throws -> SecurityKey? {
         _ = initialized

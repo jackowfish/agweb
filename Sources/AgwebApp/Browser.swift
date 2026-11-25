@@ -672,9 +672,10 @@ final class Browser {
             case "on", "off": Passkeys.shared.setUsesKey(args[1] == "on", owner)
             case let other?: throw Failure("passkey hardware takes on or off, not \(other)")
             }
-            return Passkeys.shared.usesKey(owner)
+            let missing = SecurityKey.available ? "" : "\nBut \(SecurityKey.missing)."
+            return (Passkeys.shared.usesKey(owner)
                 ? "security key on for \(whose): a site's passkey sign-up or sign-in uses the key plugged into this Mac; the person touches it and types its PIN in Agweb's window, so ask them first"
-                : "security key off for \(whose): agweb's own passkeys answer; a sign-in naming only credentials agweb doesn't hold still tries a plugged-in key"
+                : "security key off for \(whose): agweb's own passkeys answer; a sign-in naming only credentials agweb doesn't hold still tries a plugged-in key") + missing
         case "passkey" where args.first == "delete":
             let id = try arg(1, "id")
             let removed = try Passkeys.shared.agentDelete(id, PasskeyOwner(workspace))
