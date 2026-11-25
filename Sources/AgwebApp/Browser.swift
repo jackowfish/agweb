@@ -655,18 +655,30 @@ final class Browser {
             let whose = workspace.profile.map { "profile \($0)" } ?? "fresh workspace \(workspace.name), in memory"
             let off = Passkeys.shared.enabled ? "" : "\nPasskeys are off in Agweb's Settings: sites get no answer from agweb."
             let list = Passkeys.shared.list(owner)
-            if list.isEmpty { return "no passkeys in \(whose); a site's sign-up or \"add a passkey\" button creates one" + off }
+            let key = Passkeys.shared.usesKey(owner) ? "\nSecurity key on: sign-ups and sign-ins here use the key plugged into this Mac, not these." : ""
+            if list.isEmpty { return "no passkeys in \(whose); a site's sign-up or \"add a passkey\" button creates one" + key + off }
             let date = Date.FormatStyle(date: .numeric, time: .shortened)
             return "### Passkeys (\(whose))\n" + list.map { passkey in
                 "- \(passkey.id): \(passkey.label), created \(passkey.created.formatted(date))"
                     + (passkey.lastUsed.map { ", last used \($0.formatted(date))" } ?? "")
-            }.joined(separator: "\n") + off
+            }.joined(separator: "\n") + key + off
+        case "passkey" where args.first == "hardware":
+            let owner = PasskeyOwner(workspace)
+            let whose = workspace.profile.map { "profile \($0)" } ?? "fresh workspace \(workspace.name)"
+            switch args.dropFirst().first {
+            case nil, "status": break
+            case "on", "off": Passkeys.shared.setUsesKey(args[1] == "on", owner)
+            case let other?: throw Failure("passkey hardware takes on or off, not \(other)")
+            }
+            return Passkeys.shared.usesKey(owner)
+                ? "security key on for \(whose): a site's passkey sign-up or sign-in uses the key plugged into this Mac; the person touches it and types its PIN in Agweb's window, so ask them first"
+                : "security key off for \(whose): agweb's own passkeys answer; a sign-in naming only credentials agweb doesn't hold still tries a plugged-in key"
         case "passkey" where args.first == "delete":
             let id = try arg(1, "id")
             let removed = try Passkeys.shared.agentDelete(id, PasskeyOwner(workspace))
             return "deleted the passkey for \(removed.label); the site still lists it until it's removed in the account's settings there"
         case "passkey":
-            throw Failure("use: agweb passkey list | passkey delete <id>")
+            throw Failure("use: agweb passkey list | passkey delete <id> | passkey hardware [on|off]")
         case "close":
             let video = await describeStop(workspace)
             closeWorkspace(workspace)

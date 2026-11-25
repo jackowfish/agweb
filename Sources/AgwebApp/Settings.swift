@@ -63,6 +63,11 @@ struct PasskeySettings: View {
             ForEach(groups, id: \.self) { group in
                 let rows = keys.filter { $0.group == group }
                 Section(group.prefix(1).uppercased() + group.dropFirst()) {
+                    if group.hasPrefix("profile ") {
+                        let owner = PasskeyOwner.profile(String(group.dropFirst("profile ".count)))
+                        Toggle("Use a security key plugged into this Mac", isOn: Binding(get: { passkeys.usesKey(owner) }, set: { passkeys.setUsesKey($0, owner) }))
+                            .help("Sign-ups and sign-ins go to the key (a YubiKey); you touch it and type its PIN here")
+                    }
                     if rows.isEmpty { Text("No passkeys").foregroundStyle(.secondary) }
                     ForEach(rows) { entry in row(entry) }
                 }
