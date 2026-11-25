@@ -1,0 +1,5 @@
+module CFido2 [system] {
+    header "shim.h"
+    link "fido2"
+    export *
+}
