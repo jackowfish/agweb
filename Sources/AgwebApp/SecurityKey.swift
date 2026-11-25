@@ -24,7 +24,6 @@ final class SecurityKey: @unchecked Sendable {
     }
 
     private var device: OpaquePointer?
-    let product: String
     let hasPIN: Bool
     /// Built-in user verification, such as a fingerprint.
     let hasUV: Bool
@@ -43,8 +42,6 @@ final class SecurityKey: @unchecked Sendable {
         let status = fido_dev_info_manifest(list, 8, &found)
         guard status == FIDO_OK else { throw KeyFailure(code: Int(status)) }
         guard found > 0, let info = fido_dev_info_ptr(list, 0), let path = fido_dev_info_path(info) else { return nil }
-        let product = [fido_dev_info_manufacturer_string(info), fido_dev_info_product_string(info)]
-            .compactMap { $0.map { String(cString: $0) } }.filter { !$0.isEmpty }.joined(separator: " ")
         guard let device = fido_dev_new() else { throw KeyFailure(code: -9) }
         var owned: OpaquePointer? = device
         let opened = fido_dev_open(device, path)
@@ -61,12 +58,11 @@ final class SecurityKey: @unchecked Sendable {
             }
             fido_cbor_info_free(&held)
         }
-        return SecurityKey(device, product: product.isEmpty ? "security key" : product, algorithms: algorithms)
+        return SecurityKey(device, algorithms: algorithms)
     }
 
-    private init(_ device: OpaquePointer, product: String, algorithms: [Int]) {
+    private init(_ device: OpaquePointer, algorithms: [Int]) {
         self.device = device
-        self.product = product
         hasPIN = fido_dev_has_pin(device)
         hasUV = fido_dev_has_uv(device)
         self.algorithms = algorithms.isEmpty ? [WebAuthn.es256] : algorithms
@@ -152,7 +148,7 @@ enum KeyPrompt {
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         field.placeholderString = "PIN"
         alert.accessoryView = field
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Continue")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         let response = await withCheckedContinuation { done in alert.beginSheetModal(for: window) { done.resume(returning: $0) } }

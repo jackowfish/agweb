@@ -164,7 +164,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
 
     /// Runs `body` on the first key plugged in, off the main actor, after the PIN when the site wants user verification.
     /// The person sees each step as a sheet; a wrong PIN asks again.
-    private func withKey<T: Sendable>(_ tab: Tab, doing: String, userVerification: String, timeout: TimeInterval, noKey: String,
+    private func withKey<T: Sendable>(_ tab: Tab, rpID: String, doing: String, userVerification: String, timeout: TimeInterval, noKey: String,
                                       _ body: @escaping @Sendable (SecurityKey, [CChar]?, _ builtInUV: Bool) throws -> T) async throws -> T {
         guard keyInUse == nil else { throw Refusal("NotAllowedError", "the security key is busy with another request") }
         guard let window = browser?.mainWindow.window, window.isVisible, !window.isMiniaturized else {
@@ -185,7 +185,8 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         let verify = userVerification == "required" || (userVerification != "discouraged" && (key.hasPIN || key.hasUV))
         if userVerification == "required" && !key.hasPIN && !key.hasUV { throw Refusal("NotAllowedError", SecurityKeyError.reason(0x35)) }
         var usePIN = verify && !key.hasUV, wrongPIN = false
-        let place = "\(doing), in workspace \(tab.workspace.name)"
+        // Worded as Safari's and Chrome's security key prompts; the workspace line says which agent asked.
+        let asker = "\n\nRequested in workspace “\(tab.workspace.name)”."
         while true {
             var pin: [CChar]?
             defer { if pin != nil { KeyPrompt.zero(&pin!) } }
@@ -193,15 +194,16 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
                 guard window.attachedSheet == nil else { throw Refusal("NotAllowedError", "another question is open in the window") }
                 tab.events.append("security key: waiting for the person to enter its PIN in Agweb's window")
                 let left = wrongPIN ? key.pinRetries() : nil
-                pin = await KeyPrompt.pin(on: window, title: "Enter your security key's PIN",
-                                          detail: (wrongPIN ? "Wrong PIN" + (left.map { " (\($0) tries left)" } ?? "") + ". " : "")
-                                              + "To \(place). Agweb passes it to the key only.")
+                let detail = wrongPIN ? "Incorrect PIN." + (left.map { " \($0) \($0 == 1 ? "attempt" : "attempts") remaining." } ?? "")
+                    : "Enter your security key PIN to \(doing) “\(rpID)”."
+                pin = await KeyPrompt.pin(on: window, title: "Enter your security key PIN", detail: detail + asker)
                 guard pin != nil else { throw Refusal("NotAllowedError", "the person cancelled") }
                 guard !use.cancelled else { throw cancelled }
             }
             guard window.attachedSheet == nil else { throw Refusal("NotAllowedError", "another question is open in the window") }
             tab.events.append("security key: waiting for the person to touch it")
-            let end = KeyPrompt.touch(on: window, title: "Touch your security key", detail: "To \(place), with your \(key.product).") { key.cancel() }
+            let end = KeyPrompt.touch(on: window, title: "Use your security key with “\(rpID)”",
+                                      detail: "Insert your security key and touch it." + asker) { key.cancel() }
             let result = await Task.detached { [pin, verify, key] in Result { try body(key, pin, verify && key.hasUV) } }.value
             end()
             switch result {
@@ -245,7 +247,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         let hash = [UInt8](SHA256.hash(data: Data(clientData)))
         let noKey = "the profile uses a security key (agweb passkey hardware), and none is plugged in"
         return Prepared(title: "", detail: "", button: "", key: true) { [self] _ in
-            let (made, discoverable) = try await withKey(tab, doing: "create a passkey for \(rpID)", userVerification: selection["userVerification"] as? String ?? "preferred",
+            let (made, discoverable) = try await withKey(tab, rpID: rpID, doing: "create a passkey for", userVerification: selection["userVerification"] as? String ?? "preferred",
                                                          timeout: Self.timeout(options), noKey: noKey) { key, pin, builtInUV in
                 guard let algorithm = wanted.first(where: { [WebAuthn.es256, WebAuthn.eddsa].contains($0) && key.algorithms.contains($0) }) else {
                     throw KeyFailure(code: 0x26)
@@ -276,7 +278,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         let clientData = WebAuthn.clientDataJSON(type: "webauthn.get", challenge: challenge, origin: origin, crossOrigin: false)
         let hash = [UInt8](SHA256.hash(data: Data(clientData)))
         return Prepared(title: "", detail: "", button: "", key: true) { [self] _ in
-            let (signed, viaAppID) = try await withKey(tab, doing: "sign in to \(rpID)", userVerification: options["userVerification"] as? String ?? "preferred",
+            let (signed, viaAppID) = try await withKey(tab, rpID: rpID, doing: "sign in to", userVerification: options["userVerification"] as? String ?? "preferred",
                                                        timeout: Self.timeout(options), noKey: noKey) { key, pin, builtInUV in
                 // A key registered through U2F answers for the AppID, not the rp id; a silent probe tells which.
                 var rp = rpID
