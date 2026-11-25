@@ -408,8 +408,9 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
             let rpID = try rpID(options, key: nil, host: host)
             let allowed = Set((options["allowCredentials"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
             // A site that names only credentials agweb doesn't hold wants another authenticator: the key, if one is plugged in.
+            // Without libfido2 the request keeps the refusal for a missing agweb passkey.
             let held = try stored(owner)
-            let foreign = !allowed.isEmpty && !held.contains { $0.rpID == rpID && allowed.contains($0.id) }
+            let foreign = SecurityKey.available && !allowed.isEmpty && !held.contains { $0.rpID == rpID && allowed.contains($0.id) }
             if usesKey(owner) || foreign {
                 let noKey = usesKey(owner) ? "the profile uses a security key (agweb passkey hardware), and none is plugged in"
                     : "no agweb passkey for \(rpID) is among those the site accepts, and no security key is plugged in"

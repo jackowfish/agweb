@@ -57,6 +57,11 @@ struct PasskeySettings: View {
                     .onChange(of: enabled) { passkeys.settingChanged() }
                 Toggle("Use a security key plugged into this Mac in every workspace", isOn: $allKey)
                     .help("Sign-ups and sign-ins in every profile and fresh workspace go to the key (a YubiKey); you touch it and type its PIN here")
+                    .disabled(!SecurityKey.available)
+                if !SecurityKey.available {
+                    Text("Security keys need libfido2: run brew install libfido2 in Terminal, then restart Agweb.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             } footer: {
                 Text("Each profile's passkeys. Agents sign up and sign in with them with no prompt; they delete only what an agent made. "
                      + (passkeys.store is KeychainPasskeyStore ? "Kept in your login Keychain." : "This instance runs on its own folder and keeps them in a file there."))
@@ -71,7 +76,7 @@ struct PasskeySettings: View {
                     if group.hasPrefix("profile ") {
                         let owner = PasskeyOwner.profile(String(group.dropFirst("profile ".count)))
                         Toggle("Use a security key plugged into this Mac", isOn: Binding(get: { passkeys.usesKey(owner) }, set: { passkeys.setUsesKey($0, owner) }))
-                            .disabled(allKey)
+                            .disabled(allKey || !SecurityKey.available)
                             .help("Sign-ups and sign-ins go to the key (a YubiKey); you touch it and type its PIN here")
                     }
                     if rows.isEmpty { Text("No passkeys").foregroundStyle(.secondary) }
