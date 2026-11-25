@@ -20,6 +20,8 @@ enum Settings {
     static let passkeys = "agwebPasskeys"
     /// Named profiles whose passkey requests go to a security key (Passkeys.usesKey).
     static let securityKeyProfiles = "agwebSecurityKeyProfiles"
+    /// Every workspace's passkey requests go to a security key; off by default, and only the person switches it.
+    static let securityKeyAll = "agwebSecurityKeyAll"
     /// Workspaces and tabs unused this many days close by themselves (Cleanup.swift); 0 never.
     static let closeUnusedDays = "closeUnusedDays"
     /// Tabs unused this many minutes lose their page's memory and reload when used (Unload.swift); 0 never.
@@ -40,6 +42,7 @@ enum TextSize: Int, CaseIterable {
 /// sites and users (as `agweb passkey list` does); deleting waits for the Mac owner's check.
 struct PasskeySettings: View {
     @AppStorage(Settings.passkeys, store: Settings.store) private var enabled = true
+    @AppStorage(Settings.securityKeyAll, store: Settings.store) private var allKey = false
     private let passkeys = Passkeys.shared
     @State private var deleting: PasskeyEntry?
     @State private var problem: String?
@@ -52,6 +55,8 @@ struct PasskeySettings: View {
             Section {
                 Toggle("Answer passkey requests with Agweb's passkeys", isOn: $enabled)
                     .onChange(of: enabled) { passkeys.settingChanged() }
+                Toggle("Use a security key plugged into this Mac in every workspace", isOn: $allKey)
+                    .help("Sign-ups and sign-ins in every profile and fresh workspace go to the key (a YubiKey); you touch it and type its PIN here")
             } footer: {
                 Text("Each profile's passkeys. Agents sign up and sign in with them with no prompt; they delete only what an agent made. "
                      + (passkeys.store is KeychainPasskeyStore ? "Kept in your login Keychain." : "This instance runs on its own folder and keeps them in a file there."))
@@ -66,6 +71,7 @@ struct PasskeySettings: View {
                     if group.hasPrefix("profile ") {
                         let owner = PasskeyOwner.profile(String(group.dropFirst("profile ".count)))
                         Toggle("Use a security key plugged into this Mac", isOn: Binding(get: { passkeys.usesKey(owner) }, set: { passkeys.setUsesKey($0, owner) }))
+                            .disabled(allKey)
                             .help("Sign-ups and sign-ins go to the key (a YubiKey); you touch it and type its PIN here")
                     }
                     if rows.isEmpty { Text("No passkeys").foregroundStyle(.secondary) }

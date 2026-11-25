@@ -113,7 +113,8 @@ Targets: a snapshot ref (e12), role=button[name="Save"] or role=heading[level=1]
   passkey delete <id>           forget one an agent made (the site still lists it until removed there)
   passkey hardware [on|off]     on: this profile's passkey sign-ups and sign-ins use the security key (YubiKey) plugged
                                 into this Mac; the person touches it and types its PIN in Agweb's window, never you.
-                                A sign-in naming only credentials agweb doesn't hold tries the key even when off
+                                A sign-in naming only credentials agweb doesn't hold tries the key even when off.
+                                The person can turn it on for every workspace in Settings
   adblock [on|off|update]       ads and trackers are blocked with uBlock Origin's lists; off/on: for this workspace
                                 only (Settings switches every workspace); pages opened directly always load
   unload [on|off]               off: this workspace's tabs are never unloaded (by default one unused 30 minutes,

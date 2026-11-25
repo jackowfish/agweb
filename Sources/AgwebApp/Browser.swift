@@ -667,6 +667,8 @@ final class Browser {
             let whose = workspace.profile.map { "profile \($0)" } ?? "fresh workspace \(workspace.name)"
             switch args.dropFirst().first {
             case nil, "status": break
+            case "off" where Settings.store.bool(forKey: Settings.securityKeyAll):
+                throw Failure("the person set every workspace to use a security key in Agweb's Settings; only they turn that off")
             case "on", "off": Passkeys.shared.setUsesKey(args[1] == "on", owner)
             case let other?: throw Failure("passkey hardware takes on or off, not \(other)")
             }

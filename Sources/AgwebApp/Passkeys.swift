@@ -135,7 +135,8 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
 
     /// Whether the owner's sign-ups and sign-ins go to a security key plugged into the Mac instead of agweb's passkeys.
     func usesKey(_ owner: PasskeyOwner) -> Bool {
-        switch owner {
+        if Settings.store.bool(forKey: Settings.securityKeyAll) { return true }
+        return switch owner {
         case .workspace(let workspace): workspace.securityKey
         case .profile(let name): (Settings.store.stringArray(forKey: Settings.securityKeyProfiles) ?? []).contains(name)
         }
