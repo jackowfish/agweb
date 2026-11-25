@@ -87,6 +87,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
     /// A deleted profile's passkeys go with it, or the profile stays: one made later with that name would get them.
     func forget(profile name: String) throws {
         defer { revision += 1 }
+        setUsesKey(false, .profile(name))
         for passkey in try store.all() where passkey.profile == name { try? store.delete(passkey.id, interactive: false) }
         let left = try store.all().filter { $0.profile == name }.count
         if left > 0 { throw Failure("\(left) of profile \(name)'s passkeys couldn't be deleted from the Keychain, so the profile stays; try again, or delete them in Settings ▸ Passkeys") }
@@ -130,6 +131,171 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         return passkey
     }
 
+    // MARK: Security key
+
+    /// Whether the owner's sign-ups and sign-ins go to a security key plugged into the Mac instead of agweb's passkeys.
+    func usesKey(_ owner: PasskeyOwner) -> Bool {
+        switch owner {
+        case .workspace(let workspace): workspace.securityKey
+        case .profile(let name): (Settings.store.stringArray(forKey: Settings.securityKeyProfiles) ?? []).contains(name)
+        }
+    }
+
+    func setUsesKey(_ on: Bool, _ owner: PasskeyOwner) {
+        switch owner {
+        case .workspace(let workspace): workspace.securityKey = on
+        case .profile(let name):
+            let names = (Settings.store.stringArray(forKey: Settings.securityKeyProfiles) ?? []).filter { $0 != name } + (on ? [name] : [])
+            Settings.store.set(names.sorted(), forKey: Settings.securityKeyProfiles)
+        }
+        revision += 1
+    }
+
+    /// The one ceremony the key serves, and its tab, whose page may cancel it.
+    private final class KeyUse {
+        let tab: Tab
+        var key: SecurityKey?
+        var cancelled = false
+        init(_ tab: Tab) { self.tab = tab }
+    }
+
+    @ObservationIgnored private var keyInUse: KeyUse?
+
+    /// Runs `body` on the first key plugged in, off the main actor, after the PIN when the site wants user verification.
+    /// The person sees each step as a sheet; a wrong PIN asks again.
+    private func withKey<T: Sendable>(_ tab: Tab, doing: String, userVerification: String, timeout: TimeInterval, noKey: String,
+                                      _ body: @escaping @Sendable (SecurityKey, [CChar]?, _ builtInUV: Bool) throws -> T) async throws -> T {
+        guard keyInUse == nil else { throw Refusal("NotAllowedError", "the security key is busy with another request") }
+        guard let window = browser?.mainWindow.window, window.isVisible, !window.isMiniaturized else {
+            throw Refusal("NotAllowedError", "the security key needs the person, and Agweb's window is closed or minimized")
+        }
+        let use = KeyUse(tab)
+        keyInUse = use
+        defer { keyInUse = nil }
+        let cancelled = Refusal("NotAllowedError", "the page cancelled the request", quiet: true)
+        let found: SecurityKey?
+        do { found = try await Task.detached { try SecurityKey.first(timeout: timeout) }.value } catch let failure as KeyFailure {
+            throw Refusal(failure.name, failure.reason)
+        }
+        guard let key = found else { throw Refusal("NotAllowedError", noKey) }
+        guard !use.cancelled else { throw cancelled }
+        use.key = key
+        // As Chrome does: "preferred" verifies when the key can, with its built-in sensor before its PIN.
+        let verify = userVerification == "required" || (userVerification != "discouraged" && (key.hasPIN || key.hasUV))
+        if userVerification == "required" && !key.hasPIN && !key.hasUV { throw Refusal("NotAllowedError", SecurityKeyError.reason(0x35)) }
+        var usePIN = verify && !key.hasUV, wrongPIN = false
+        let place = "\(doing), in workspace \(tab.workspace.name)"
+        while true {
+            var pin: [CChar]?
+            defer { if pin != nil { KeyPrompt.zero(&pin!) } }
+            if usePIN {
+                guard window.attachedSheet == nil else { throw Refusal("NotAllowedError", "another question is open in the window") }
+                tab.events.append("security key: waiting for the person to enter its PIN in Agweb's window")
+                let left = wrongPIN ? key.pinRetries() : nil
+                pin = await KeyPrompt.pin(on: window, title: "Enter your security key's PIN",
+                                          detail: (wrongPIN ? "Wrong PIN" + (left.map { " (\($0) tries left)" } ?? "") + ". " : "")
+                                              + "To \(place). Agweb passes it to the key only.")
+                guard pin != nil else { throw Refusal("NotAllowedError", "the person cancelled") }
+                guard !use.cancelled else { throw cancelled }
+            }
+            guard window.attachedSheet == nil else { throw Refusal("NotAllowedError", "another question is open in the window") }
+            tab.events.append("security key: waiting for the person to touch it")
+            let end = KeyPrompt.touch(on: window, title: "Touch your security key", detail: "To \(place), with your \(key.product).") { key.cancel() }
+            let result = await Task.detached { [pin, verify, key] in Result { try body(key, pin, verify && key.hasUV) } }.value
+            end()
+            switch result {
+            case .success(let value): return value
+            case .failure(let failure as KeyFailure) where failure.code == SecurityKeyError.pinInvalid:
+                wrongPIN = true
+            case .failure(let failure as KeyFailure) where failure.code == SecurityKeyError.pinRequired && !usePIN && key.hasPIN:
+                usePIN = true
+            case .failure(let failure as KeyFailure) where use.cancelled && failure.code == 0x2d: throw cancelled
+            case .failure(let failure as KeyFailure): throw Refusal(failure.name, failure.reason)
+            case .failure(let error): throw error
+            }
+        }
+    }
+
+    /// The page aborted its request: a key waiting for the touch stops.
+    private func cancelKey(for tab: Tab?) {
+        guard let tab, let use = keyInUse, use.tab === tab else { return }
+        use.cancelled = true
+        use.key?.cancel()
+    }
+
+    private static func timeout(_ options: [String: Any]) -> TimeInterval {
+        min(max((options["timeout"] as? Double).map { $0 / 1000 } ?? 120, 30), 300)
+    }
+
+    private func keyCreate(_ options: [String: Any], challenge: [UInt8], origin: String, host: String, tab: Tab, credProps: Bool) throws -> Prepared {
+        let rpID = try rpID(options, key: "rp", host: host)
+        let rpName = Self.clean((options["rp"] as? [String: Any])?["name"] as? String)
+        let user = options["user"] as? [String: Any] ?? [:]
+        guard let handle = (user["id"] as? String).flatMap(WebAuthn.fromBase64url), (1...64).contains(handle.count) else {
+            throw Refusal("TypeError", "user.id must be 1 to 64 bytes")
+        }
+        let userName = Self.clean(user["name"] as? String), displayName = Self.clean(user["displayName"] as? String)
+        let params = (options["pubKeyCredParams"] as? [[String: Any]] ?? []).filter { ($0["type"] as? String ?? "public-key") == "public-key" }
+        let wanted = params.isEmpty ? [WebAuthn.es256] : params.compactMap { $0["alg"] as? Int }
+        let selection = options["authenticatorSelection"] as? [String: Any] ?? [:]
+        let residentKey = selection["residentKey"] as? String ?? (selection["requireResidentKey"] as? Bool == true ? "required" : "discouraged")
+        let exclude = (options["excludeCredentials"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? String).flatMap(WebAuthn.fromBase64url) }
+        let clientData = WebAuthn.clientDataJSON(type: "webauthn.create", challenge: challenge, origin: origin, crossOrigin: false)
+        let hash = [UInt8](SHA256.hash(data: Data(clientData)))
+        let noKey = "the profile uses a security key (agweb passkey hardware), and none is plugged in"
+        return Prepared(title: "", detail: "", button: "", key: true) { [self] _ in
+            let (made, discoverable) = try await withKey(tab, doing: "create a passkey for \(rpID)", userVerification: selection["userVerification"] as? String ?? "preferred",
+                                                         timeout: Self.timeout(options), noKey: noKey) { key, pin, builtInUV in
+                guard let algorithm = wanted.first(where: { [WebAuthn.es256, WebAuthn.eddsa].contains($0) && key.algorithms.contains($0) }) else {
+                    throw KeyFailure(code: 0x26)
+                }
+                let rk: Bool? = residentKey == "required" ? true : residentKey == "preferred" && (pin != nil || builtInUV) ? true : nil
+                let made = try key.register(clientDataHash: hash, rpID: rpID, rpName: rpName, userID: handle, userName: userName, displayName: displayName,
+                                            algorithm: algorithm, residentKey: rk, uv: builtInUV, exclude: exclude, pin: pin)
+                return (made, rk == true)
+            }
+            tab.events.append("passkey created on the security key for \(rpID) (user \(userName.isEmpty ? displayName : userName))")
+            var reply: [String: Any] = [
+                "id": WebAuthn.base64url(made.id), "clientDataJSON": WebAuthn.base64url(clientData),
+                "attestationObject": WebAuthn.base64url(WebAuthn.attestationObject(format: made.format, statement: made.statement, authenticatorData: made.authData)),
+                "authenticatorData": WebAuthn.base64url(made.authData), "algorithm": made.algorithm, "transports": ["usb"], "attachment": "cross-platform",
+                "credProps": credProps, "rk": discoverable,
+            ]
+            if let info = WebAuthn.publicKeyInfo(algorithm: made.algorithm, raw: made.publicKey) { reply["publicKey"] = WebAuthn.base64url(info) }
+            return reply
+        }
+    }
+
+    private func keyGet(_ options: [String: Any], challenge: [UInt8], origin: String, rpID: String, host: String, tab: Tab, noKey: String) throws -> Prepared {
+        let allow = (options["allowCredentials"] as? [[String: Any]] ?? []).compactMap { ($0["id"] as? String).flatMap(WebAuthn.fromBase64url) }
+        let appID = (options["extensions"] as? [String: Any])?["appid"] as? String
+        if let appID, !(PublicSuffixes.bundled.map { WebAuthn.appIDAllowed(appID, host: host, suffixes: $0) } ?? false) {
+            throw Refusal("SecurityError", "\(host) can't use the AppID \(Self.clean(appID))")
+        }
+        let clientData = WebAuthn.clientDataJSON(type: "webauthn.get", challenge: challenge, origin: origin, crossOrigin: false)
+        let hash = [UInt8](SHA256.hash(data: Data(clientData)))
+        return Prepared(title: "", detail: "", button: "", key: true) { [self] _ in
+            let (signed, viaAppID) = try await withKey(tab, doing: "sign in to \(rpID)", userVerification: options["userVerification"] as? String ?? "preferred",
+                                                       timeout: Self.timeout(options), noKey: noKey) { key, pin, builtInUV in
+                // A key registered through U2F answers for the AppID, not the rp id; a silent probe tells which.
+                var rp = rpID
+                if let appID, !allow.isEmpty {
+                    do { _ = try key.sign(clientDataHash: hash, rpID: rpID, allow: allow, uv: false, pin: nil, probe: true) } catch let failure as KeyFailure
+                        where failure.code == SecurityKeyError.noCredentials { rp = appID } catch {}
+                }
+                return (try key.sign(clientDataHash: hash, rpID: rp, allow: allow, uv: builtInUV, pin: pin), rp != rpID)
+            }
+            tab.events.append("signed in to \(rpID) with the security key"
+                + (signed.count > 1 ? " (it holds \(signed.count) accounts for the site; agweb used the first)" : ""))
+            var reply: [String: Any] = ["id": WebAuthn.base64url(signed.id), "clientDataJSON": WebAuthn.base64url(clientData),
+                                        "authenticatorData": WebAuthn.base64url(signed.authData), "signature": WebAuthn.base64url(signed.signature),
+                                        "attachment": "cross-platform"]
+            if !signed.userHandle.isEmpty { reply["userHandle"] = WebAuthn.base64url(signed.userHandle) }
+            if appID != nil { reply["extensions"] = ["appid": viaAppID] }
+            return reply
+        }
+    }
+
     // MARK: Ceremonies
 
     /// `quiet`: the page gets the error, the agent's Events don't, for a request nobody made (a page's own timer).
@@ -141,12 +307,18 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
     /// What a ceremony would do, checked; `commit` does it. The person's own click asks them first.
     private struct Prepared {
         let title: String, detail: String, button: String
+        /// A security key's ceremony: the person's touch is their OK, so no sheet asks first.
+        var key = false
         /// `byPerson`: the person said yes in the sheet, so the Keychain may ask them too.
         let commit: (_ byPerson: Bool) async throws -> [String: Any]
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         let tab = browser?.tab(for: message.webView)
+        if (message.body as? [String: Any])?["kind"] as? String == "cancel" {
+            cancelKey(for: tab)
+            return replyHandler(nil, nil)
+        }
         func refuse(_ refusal: Refusal) {
             if !refusal.quiet { tab?.events.append("passkey request refused: \(refusal.message)") }
             replyHandler(["error": ["name": refusal.name, "message": refusal.message]], nil)
@@ -163,7 +335,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
         do {
             guard let tab else { throw Refusal("NotAllowedError", "agweb doesn't know this page") }
             let (prepared, byPerson) = try prepare(message, tab)
-            guard byPerson else { return run(prepared, byPerson: false) }
+            guard byPerson && !prepared.key else { return run(prepared, byPerson: byPerson) }
             // An agent's request needs no prompt; the person sees what agweb's passkey is before it's made or used.
             guard let window = browser?.mainWindow.window, window.isVisible, window.attachedSheet == nil else {
                 throw Refusal("NotAllowedError", "another question is open in the window")
@@ -225,6 +397,21 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
             throw Refusal("TypeError", "the request has no challenge")
         }
         let owner = PasskeyOwner(tab.workspace)
+        if kind == "create" && usesKey(owner) {
+            return (try keyCreate(options, challenge: challenge, origin: originText, host: host, tab: tab, credProps: body["credProps"] as? Bool ?? false), !byAgent)
+        }
+        if kind == "get" {
+            let rpID = try rpID(options, key: nil, host: host)
+            let allowed = Set((options["allowCredentials"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+            // A site that names only credentials agweb doesn't hold wants another authenticator: the key, if one is plugged in.
+            let held = try stored(owner)
+            let foreign = !allowed.isEmpty && !held.contains { $0.rpID == rpID && allowed.contains($0.id) }
+            if usesKey(owner) || foreign {
+                let noKey = usesKey(owner) ? "the profile uses a security key (agweb passkey hardware), and none is plugged in"
+                    : "no agweb passkey for \(rpID) is among those the site accepts, and no security key is plugged in"
+                return (try keyGet(options, challenge: challenge, origin: originText, rpID: rpID, host: host, tab: tab, noKey: noKey), !byAgent)
+            }
+        }
         switch kind {
         case "create": return (try create(options, challenge: challenge, origin: originText, host: host, owner: owner, tab: tab, credProps: body["credProps"] as? Bool ?? false), !byAgent)
         case "get": return (try get(options, challenge: challenge, origin: originText, host: host, owner: owner, tab: tab), !byAgent)
@@ -265,7 +452,7 @@ final class Passkeys: NSObject, WKScriptMessageHandlerWithReply {
             throw Refusal("NotSupportedError", "agweb's passkeys are ES256 (-7) only")
         }
         if (options["authenticatorSelection"] as? [String: Any])?["authenticatorAttachment"] as? String == "cross-platform" {
-            throw Refusal("NotAllowedError", "the site asked for a security key; agweb's passkeys are platform passkeys")
+            throw Refusal("NotAllowedError", "the site asked for a security key; agweb passkey hardware on uses one plugged into this Mac")
         }
         let handleText = WebAuthn.base64url(handle)
         let excluded = Set((options["excludeCredentials"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })

@@ -18,6 +18,8 @@ enum Settings {
     static let textSize = "textSize"
     static let adBlock = "blockAds"
     static let passkeys = "agwebPasskeys"
+    /// Named profiles whose passkey requests go to a security key (Passkeys.usesKey).
+    static let securityKeyProfiles = "agwebSecurityKeyProfiles"
     /// Workspaces and tabs unused this many days close by themselves (Cleanup.swift); 0 never.
     static let closeUnusedDays = "closeUnusedDays"
     /// Tabs unused this many minutes lose their page's memory and reload when used (Unload.swift); 0 never.

@@ -139,6 +139,8 @@ final class Workspace: Identifiable {
     @ObservationIgnored let console: ConsoleSink
     /// A fresh workspace's passkeys, gone with it; a named profile's are in the Keychain (Passkeys).
     @ObservationIgnored let passkeys = MemoryPasskeyStore()
+    /// A fresh workspace's `passkey hardware on`; a named profile's is in Settings.
+    @ObservationIgnored var securityKey = false
     /// The command running (or last run) acts on the page, so its page may use passkeys (Passkeys.commands).
     @ObservationIgnored var passkeyCommand = false
 
